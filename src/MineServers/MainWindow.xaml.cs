@@ -2,32 +2,13 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using MineServers.Core;
 
 namespace MineServers;
-
-/// <summary>A server in the list plus what's running for it right now.</summary>
-public class ServerItem(ServerEntry entry) : INotifyPropertyChanged
-{
-    public ServerEntry Entry { get; } = entry;
-    public ServerRunner Runner { get; } = new();
-    public Tunnel? Tunnel { get; set; }
-    public string Address { get; set; } = "";
-    public StringBuilder Log { get; } = new();
-    public HashSet<string> AskedAbout { get; } = new(StringComparer.OrdinalIgnoreCase); // don't ask twice in one run
-    public string Subtitle => $"{Runner.State} · {Entry.Type} {Entry.Version}".Trim();
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-    public void Refresh()
-    {
-        PropertyChanged?.Invoke(this, new(nameof(Subtitle)));
-        PropertyChanged?.Invoke(this, new("Entry"));
-    }
-}
 
 public partial class MainWindow : Window
 {
@@ -53,6 +34,96 @@ public partial class MainWindow : Window
         var updateSignal = new EventWaitHandle(false, EventResetMode.AutoReset, $@"Local\MineServers-Close-{Environment.ProcessId}");
         ThreadPool.RegisterWaitForSingleObject(updateSignal, (_, _) => Dispatcher.BeginInvoke(CloseForUpdate), null, -1, true);
         Loaded += async (_, _) => await ResumeAfterUpdate();
+
+        // Every 2 seconds: sample CPU/memory and run any scheduled tasks that are due.
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        timer.Tick += (_, _) => Tick();
+        timer.Start();
+    }
+
+    void Tick()
+    {
+        var now = DateTime.Now;
+        foreach (var item in _items)
+        {
+            if (item.Runner.IsRunning) item.Perf.Sample(item.Runner.Process);
+            foreach (var task in item.Entry.Tasks.Where(t => Scheduler.IsDue(t, now)).ToList())
+            {
+                task.LastRun = now;
+                SaveConfig();
+                _ = RunTask(item, task);
+            }
+        }
+        if (Selected is { } sel && Tabs.SelectedContent == PerfTab) PerfTab.Show(sel);
+    }
+
+    // ---------- used by the tabs ----------
+
+    internal void SaveConfig() => Store.Save(_cfg);
+
+    /// <summary>Sends a console command, showing it in the console. Says so if the server isn't running.</summary>
+    internal bool Run(ServerItem item, string command)
+    {
+        if (!item.Runner.IsRunning)
+        {
+            MessageBox.Show("Start the server first, then try again.", "MineServers");
+            return false;
+        }
+        AppendLog(item, "> " + command);
+        item.Runner.Send(command);
+        return true;
+    }
+
+    internal async Task RestartServer(ServerItem item)
+    {
+        if (item.Runner.IsRunning)
+        {
+            await item.Runner.Stop();
+            if (item.Tunnel is { } t) { item.Tunnel = null; item.Address = ""; await t.Stop(); }
+        }
+        await StartServer(item);
+    }
+
+    /// <summary>Runs a scheduled task's steps: console commands plus !wait, !restart, !start and !stop.</summary>
+    internal async Task RunTask(ServerItem item, ScheduledTask task)
+    {
+        AppendLog(item, $"[Scheduler] Running \"{task.Name}\".");
+        foreach (var step in Scheduler.Steps(task.Commands))
+        {
+            var word = step.Split(' ', 2)[0].ToLowerInvariant();
+            switch (word)
+            {
+                case "!wait":
+                    await Task.Delay(TimeSpan.FromSeconds(int.TryParse(step.Split(' ', 2).ElementAtOrDefault(1), out var s) ? Math.Max(s, 0) : 0));
+                    break;
+                case "!restart":
+                    if (item.Runner.IsRunning) await RestartServer(item);
+                    break;
+                case "!start":
+                    if (!item.Runner.IsRunning) await StartServer(item);
+                    break;
+                case "!stop":
+                    await item.Runner.Stop();
+                    break;
+                default:
+                    if (item.Runner.IsRunning) { AppendLog(item, "> " + step); item.Runner.Send(step); }
+                    else AppendLog(item, $"[Scheduler] Skipped \"{step}\": the server isn't running.");
+                    break;
+            }
+        }
+    }
+
+    /// <summary>Asks the server for its game rules. Tries 26.x names first, then 1.x camelCase. The replies stay out of the console.</summary>
+    async Task QueryRules(ServerItem item)
+    {
+        item.QuietUntil = DateTime.Now.AddSeconds(8);
+        item.Runner.Send("gamerule mob_griefing");
+        await Task.Delay(1500);
+        if (item.SnakeRules == null) { item.Runner.Send("gamerule mobGriefing"); await Task.Delay(1500); }
+        if (item.SnakeRules is not { } snake || !item.Runner.IsRunning) return;
+        item.QuietUntil = DateTime.Now.AddSeconds(5);
+        foreach (var name in GameSettings.Rules.Select(r => r.NameFor(snake)).OfType<string>())
+            item.Runner.Send("gamerule " + name);
     }
 
     void CloseForUpdate()
@@ -81,15 +152,21 @@ public partial class MainWindow : Window
         var item = new ServerItem(s);
         item.Runner.Output += line => Dispatcher.BeginInvoke(() =>
         {
-            AppendLog(item, line);
+            int online = item.Online.Count;
+            if (!item.Observe(line)) AppendLog(item, line);
             if (Players.RejectedName(line) is { } name) OfferToAllow(item, name);
+            if (online != item.Online.Count) item.Refresh();
+            if (item != Selected) return;
+            if (online != item.Online.Count) OnlineList.ItemsSource = item.Online.ToList();
+            if (GameSettings.ParseRule(line) != null) GamePanel.ShowRules(item);
+            if (PerfMeter.ParseTickMs(line) != null) PerfTab.Show(item);
         });
         item.Runner.StateChanged += () => Dispatcher.BeginInvoke(() => OnStateChanged(item));
         _items.Add(item);
         return item;
     }
 
-    void Save() => Store.Save(_cfg);
+    void Save() => SaveConfig();
 
     // ---------- list ----------
 
@@ -115,8 +192,19 @@ public partial class MainWindow : Window
         javaChoices.AddRange(_javas);
         JavaBox.ItemsSource = javaChoices;
         JavaBox.SelectedItem = _javas.FirstOrDefault(j => string.Equals(j.Exe, s.JavaPath, StringComparison.OrdinalIgnoreCase)) ?? javaChoices[0];
+        PluginsItem.Header = Modrinth.For(s.Type) is { } k ? char.ToUpper(k.Noun[0]) + k.Noun[1..] + "s" : "Plugins";
         RefreshHeader();
+        RefreshTabs(item);
+    }
+
+    void RefreshTabs(ServerItem item)
+    {
         RefreshPlayers();
+        PerfTab.Show(item);
+        SchedTab.Show(item);
+        PlugTab.Show(item);
+        FileTab.Show(item);
+        GamePanel.Show(item);
     }
 
     // ---------- players ----------
@@ -129,7 +217,26 @@ public partial class MainWindow : Window
         catch (IOException) { } // still busy after waiting: keep showing the last known state
         AllowedList.ItemsSource = Players.Allowed(dir);
         BannedList.ItemsSource = Players.Banned(dir);
+        OpsList.ItemsSource = Players.Operators(dir);
+        OnlineList.ItemsSource = item.Online.ToList();
         PlayersNote.Visibility = item.Runner.IsRunning ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    void OnlineCommand(string verb)
+    {
+        if (Selected is { } item && OnlineList.SelectedItem is string name) PlayerCommand(item, $"{verb} {name}");
+        else MessageBox.Show("Pick a player in the Online now list first.", "MineServers");
+    }
+
+    void Kick_Click(object sender, RoutedEventArgs e) => OnlineCommand("kick");
+    void OpOnline_Click(object sender, RoutedEventArgs e) => OnlineCommand("op");
+    void BanOnline_Click(object sender, RoutedEventArgs e) => OnlineCommand("ban");
+    void RefreshOnline_Click(object sender, RoutedEventArgs e) { if (Selected is { } item) PlayerCommand(item, "list"); }
+    void OpName_Click(object sender, RoutedEventArgs e) => PlayerNameCommand("op");
+
+    void Deop_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is { } item && OpsList.SelectedItem is string name) PlayerCommand(item, $"deop {name}");
     }
 
     /// <summary>Someone was turned away by the whitelist: one click lets them in for good.</summary>
@@ -229,15 +336,20 @@ public partial class MainWindow : Window
 
     async void OnStateChanged(ServerItem item)
     {
-        if (item.Runner.State == "Stopped" && item.Tunnel != null)
+        var state = item.Runner.State;
+        if (state == "Stopped")
         {
-            var t = item.Tunnel;
-            item.Tunnel = null;
-            item.Address = "";
-            await t.Stop();
+            item.ClearLive();
+            if (item.Tunnel is { } t)
+            {
+                item.Tunnel = null;
+                item.Address = "";
+                await t.Stop();
+            }
         }
         item.Refresh();
-        if (item == Selected) { RefreshHeader(); RefreshPlayers(); }
+        if (item == Selected) { RefreshHeader(); RefreshTabs(item); }
+        if (state == "Running") await QueryRules(item);
     }
 
     // ---------- start / stop ----------
@@ -253,6 +365,14 @@ public partial class MainWindow : Window
         await CheckFirewall(item);
         try
         {
+            if (item.Entry.PendingProperties.Count > 0)
+            {
+                // Settings saved while the server ran. Written now, before it starts, so it can't overwrite them.
+                ServerProperties.SetMany(Path.Combine(item.Entry.Path, "server.properties"), item.Entry.PendingProperties);
+                AppendLog(item, $"[MineServers] Applied {item.Entry.PendingProperties.Count} setting change(s).");
+                item.Entry.PendingProperties.Clear();
+                Save();
+            }
             await item.Runner.Start(item.Entry, progress);
         }
         catch (Exception ex)
@@ -321,9 +441,16 @@ public partial class MainWindow : Window
 
     void Send_Click(object sender, RoutedEventArgs e) => SendCommand();
 
-    void CommandBox_KeyDown(object sender, KeyEventArgs e)
+    void CommandBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter) SendCommand();
+        if (e.Key is not (Key.Up or Key.Down) || Selected is not { } item) return;
+        var history = item.Entry.CommandHistory;
+        if (history.Count == 0) return;
+        item.HistoryIndex = Math.Clamp(item.HistoryIndex + (e.Key == Key.Up ? 1 : -1), -1, history.Count - 1);
+        CommandBox.Text = item.HistoryIndex < 0 ? "" : history[history.Count - 1 - item.HistoryIndex];
+        CommandBox.CaretIndex = CommandBox.Text.Length;
+        e.Handled = true;
     }
 
     void SendCommand()
@@ -335,6 +462,19 @@ public partial class MainWindow : Window
         AppendLog(item, "> " + cmd);
         item.Runner.Send(cmd);
         CommandBox.Clear();
+        var history = item.Entry.CommandHistory;
+        history.Remove(cmd);
+        history.Add(cmd);
+        if (history.Count > 50) history.RemoveAt(0);
+        item.HistoryIndex = -1;
+        Save();
+    }
+
+    void ClearConsole_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } item) return;
+        item.Log.Clear();
+        ConsoleBox.Clear();
     }
 
     void Copy_Click(object sender, RoutedEventArgs e)
@@ -358,7 +498,7 @@ public partial class MainWindow : Window
         NgrokPanel.Visibility = kind?.Id == TunnelKinds.Ngrok ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    void Save_Click(object sender, RoutedEventArgs e)
+    async void Save_Click(object sender, RoutedEventArgs e)
     {
         var item = Selected;
         if (item == null) return;
@@ -381,9 +521,30 @@ public partial class MainWindow : Window
         s.Port = port;
         s.JavaPath = (JavaBox.SelectedItem as JavaInstall)?.Exe;
         _cfg.NgrokAuthToken = NullIfEmpty(NgrokTokenBox.Password);
+
+        var changes = GamePanel.Changes();
+        bool restartNeeded = false;
+        if (changes.Count > 0 && item.Runner.IsRunning)
+        {
+            foreach (var (k, v) in changes) s.PendingProperties[k] = v; // the running server would overwrite the file
+            restartNeeded = true;
+        }
+        else if (changes.Count > 0)
+        {
+            try { ServerProperties.SetMany(Path.Combine(s.Path, "server.properties"), changes); }
+            catch (IOException ex)
+            {
+                foreach (var (k, v) in changes) s.PendingProperties[k] = v; // keep them; they're applied at the next start
+                AppendLog(item, "[MineServers] server.properties is busy; settings will be applied at the next start. " + ex.Message);
+            }
+        }
         Save();
         item.Refresh();
         RefreshHeader();
+        GamePanel.Show(item);
+        if (restartNeeded && MessageBox.Show($"Saved. The server reads these {changes.Count} setting(s) when it starts.\n\nRestart the server now? Players will be disconnected for a moment.",
+                "MineServers", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            await RestartServer(item);
     }
 
     static string? NullIfEmpty(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

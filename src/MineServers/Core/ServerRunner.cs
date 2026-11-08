@@ -13,6 +13,9 @@ public class ServerRunner
     Process? _proc;
     public string State { get; private set; } = "Stopped"; // Stopped | Starting | Running | Stopping
     public bool IsRunning => _proc is { HasExited: false };
+    public DateTime StartedAt { get; private set; }
+    // shortcut: for run.bat servers this is cmd.exe, so CPU/memory miss the java child; read the child process if Forge users need it.
+    public Process? Process => IsRunning ? _proc : null;
 
     public async Task Start(ServerEntry s, IProgress<string> log)
     {
@@ -56,22 +59,35 @@ public class ServerRunner
             var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
             p.OutputDataReceived += (_, e) => OnLine(e.Data);
             p.ErrorDataReceived += (_, e) => OnLine(e.Data);
-            p.Exited += (_, _) =>
-            {
-                Output?.Invoke($"[MineServers] Server stopped (exit code {p.ExitCode}).");
-                SetState("Stopped");
-            };
+            p.Exited += (_, _) => Finished(p);
             Output?.Invoke($"[MineServers] Starting with {java}");
+            _proc = p;
+            StartedAt = DateTime.Now;
             p.Start();
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
-            _proc = p;
         }
         catch
         {
+            _proc = null; // a process that never started must not count as running
             SetState("Stopped");
             throw;
         }
+    }
+
+    readonly object _gate = new();
+
+    /// <summary>Reports a run's end exactly once, whether Stop() or the exit event gets here first.
+    /// An older run finishing late can't mark a newer one as stopped.</summary>
+    void Finished(Process p)
+    {
+        lock (_gate)
+        {
+            if (_proc != p) return;
+            _proc = null;
+        }
+        Output?.Invoke($"[MineServers] Server stopped (exit code {p.ExitCode}).");
+        SetState("Stopped");
     }
 
     void OnLine(string? line)
@@ -99,16 +115,18 @@ public class ServerRunner
     /// <summary>Asks the server to save and stop; forces it closed only if it hangs.</summary>
     public async Task Stop(TimeSpan? grace = null)
     {
-        if (!IsRunning) return;
+        if (_proc is not { HasExited: false } p) return;
         SetState("Stopping");
         Send("stop");
         using var cts = new CancellationTokenSource(grace ?? TimeSpan.FromSeconds(30));
-        try { await _proc!.WaitForExitAsync(cts.Token); }
+        try { await p.WaitForExitAsync(cts.Token); }
         catch (OperationCanceledException)
         {
             Output?.Invoke("[MineServers] Server didn't stop in time, forcing it closed.");
-            try { _proc!.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            await p.WaitForExitAsync();
         }
+        Finished(p); // so a restart can begin straight away
     }
 
     void SetState(string s)
@@ -120,19 +138,43 @@ public class ServerRunner
 
 public static class ServerProperties
 {
-    /// <summary>Sets one key in server.properties, keeping every other line as it was.</summary>
-    public static void Set(string file, string key, string value)
+    /// <summary>Sets several keys in one write.</summary>
+    public static void SetMany(string file, IReadOnlyDictionary<string, string> values)
     {
         var lines = File.Exists(file) ? Lines(file) : new List<string>();
-        var i = lines.FindIndex(l => l.StartsWith(key + "=", StringComparison.Ordinal));
-        if (i >= 0) lines[i] = $"{key}={value}"; else lines.Add($"{key}={value}");
+        foreach (var (key, value) in values)
+        {
+            var i = lines.FindIndex(l => l.StartsWith(key + "=", StringComparison.Ordinal));
+            var line = $"{key}={Escape(value)}";
+            if (i >= 0) lines[i] = line; else lines.Add(line);
+        }
         SharedFile.WriteAllText(file, string.Join(Environment.NewLine, lines) + Environment.NewLine);
     }
 
-    public static string? Get(string file, string key) =>
+    // Java .properties escaping, which the server uses: "minecraft\:normal", "§" for non-ASCII.
+    internal static string Escape(string value) => string.Concat(value.Select(c => c switch
+    {
+        '\\' => @"\\",
+        ':' => @"\:",
+        '=' => @"\=",
+        > '~' or < ' ' => $"\\u{(int)c:x4}",
+        _ => c.ToString(),
+    }));
+
+    internal static string Unescape(string value) =>
+        System.Text.RegularExpressions.Regex.Replace(value, @"\\(u[0-9a-fA-F]{4}|.)", m =>
+            m.Groups[1].Value.Length == 5 ? ((char)Convert.ToInt32(m.Groups[1].Value[1..], 16)).ToString() : m.Groups[1].Value);
+
+    public static void Set(string file, string key, string value) => SetMany(file, new Dictionary<string, string> { [key] = value });
+
+    public static string? Get(string file, string key) => ReadAll(file).GetValueOrDefault(key);
+
+    /// <summary>Every key=value line (comments skipped). Empty if the server hasn't made the file yet.</summary>
+    public static Dictionary<string, string> ReadAll(string file) =>
         File.Exists(file)
-            ? Lines(file).FirstOrDefault(l => l.StartsWith(key + "=", StringComparison.Ordinal))?[(key.Length + 1)..]
-            : null;
+            ? Lines(file).Where(l => !l.StartsWith('#') && l.Contains('='))
+                .GroupBy(l => l[..l.IndexOf('=')]).ToDictionary(g => g.Key, g => Unescape(g.Last()[(g.Key.Length + 1)..]))
+            : new();
 
     static List<string> Lines(string file)
     {

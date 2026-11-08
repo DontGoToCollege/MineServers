@@ -18,6 +18,17 @@ in a `MineServers-Data` folder next to itself.
 4. The **Console** tab shows the server's output. Type commands there (for example `op YourName`) and press Enter.
 5. **Stop** saves the world and shuts the server down. Closing MineServers does the same for every running server.
 
+### What's in each tab
+
+- **Console**: the server's output, a command box (Up/Down for earlier commands) and Clear.
+- **Performance**: CPU and memory with a 10-minute graph, players online, uptime, and a lag check (tick time).
+- **Players**: who's online (kick, make operator, ban), operators, the whitelist and bans.
+- **Scheduler**: tasks that run every few minutes, daily or weekly. Steps are server commands plus `!wait 30`, `!restart`, `!start` and `!stop`. There are ready-made tasks for a daily restart with a warning, auto-saves and announcements.
+- **Plugins** (Paper) or **Mods** (Fabric, Forge): search Modrinth for ones that fit your server's version, and install them with their required dependencies. You can also turn them on or off, or remove them.
+- **Tunnels**: how friends outside your network join (see below).
+- **Settings**: memory, port and Java, plus the server's game settings as a simple form (game mode, difficulty, max players, view and simulation distance, PvP, flying, hardcore, spawn protection and more). Game rules like mob griefing and keep inventory change instantly while the server runs. Settings changed while it runs are applied at the next restart.
+- **Server Files**: browse the server's folder and edit its config files right in the app.
+
 Already using SquidServers? Click **Import from SquidServers**. Your servers show up in the list and stay in their
 existing folders, so nothing is copied or changed. Don't run the same server in both apps at the same time.
 

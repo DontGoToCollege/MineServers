@@ -1,6 +1,7 @@
 <Window x:Class="MineServers.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:tabs="clr-namespace:MineServers.Tabs"
         Title="MineServers" Width="1100" Height="720" MinWidth="800" MinHeight="500"
         Background="#F3F4F6" WindowStartupLocation="CenterScreen" Closing="OnClosing">
     <Grid>
@@ -61,22 +62,42 @@
                 </DockPanel>
             </Border>
 
-            <TabControl Grid.Row="2">
+            <TabControl x:Name="Tabs" Grid.Row="2">
                 <TabItem Header="Console">
                     <DockPanel Margin="6">
                         <DockPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+                            <Button DockPanel.Dock="Right" Content="Clear" Margin="6,0,0,0" Click="ClearConsole_Click"/>
                             <Button DockPanel.Dock="Right" Content="Send" Margin="6,0,0,0" Click="Send_Click"/>
-                            <TextBox x:Name="CommandBox" FontFamily="Consolas" VerticalContentAlignment="Center" KeyDown="CommandBox_KeyDown"
-                                     ToolTip="Type a server command (without /) and press Enter, e.g. op YourName"/>
+                            <TextBox x:Name="CommandBox" FontFamily="Consolas" VerticalContentAlignment="Center" PreviewKeyDown="CommandBox_PreviewKeyDown"
+                                     ToolTip="Type a server command (without /) and press Enter, e.g. op YourName. Up and Down go through earlier commands."/>
                         </DockPanel>
                         <TextBox x:Name="ConsoleBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12" Background="#111827" Foreground="#E5E7EB"
                                  TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" BorderThickness="0" Padding="6"/>
                     </DockPanel>
                 </TabItem>
+                <TabItem Header="Performance">
+                    <tabs:PerformanceTab x:Name="PerfTab"/>
+                </TabItem>
                 <TabItem Header="Players">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="12" MaxWidth="620" HorizontalAlignment="Left">
-                            <CheckBox x:Name="WhitelistBox" Content="Whitelist: only players I've allowed can join" FontWeight="SemiBold"
+                            <TextBlock Style="{StaticResource Label}" Margin="0,0,0,3" Text="Online now"/>
+                            <ListBox x:Name="OnlineList" Height="100"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <Button Content="Kick" Click="Kick_Click"/>
+                                <Button Content="Make operator" Click="OpOnline_Click"/>
+                                <Button Content="Ban" Click="BanOnline_Click"/>
+                                <Button Content="Refresh" Click="RefreshOnline_Click"/>
+                            </StackPanel>
+
+                            <TextBlock Style="{StaticResource Label}" Margin="0,16,0,3" Text="Operators (can use cheats and commands)"/>
+                            <ListBox x:Name="OpsList" Height="80"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <Button Content="Make name operator" Click="OpName_Click"/>
+                                <Button Content="Remove selected" Click="Deop_Click"/>
+                            </StackPanel>
+
+                            <CheckBox x:Name="WhitelistBox" Margin="0,18,0,0" Content="Whitelist: only players I've allowed can join" FontWeight="SemiBold"
                                       Click="WhitelistBox_Click"/>
                             <TextBlock Style="{StaticResource Help}"
                                        Text="When someone who isn't allowed tries to join, MineServers asks whether to let them in. Say yes once and they can always join this server."/>
@@ -103,13 +124,16 @@
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
-                <TabItem Header="Settings">
+                <TabItem Header="Scheduler">
+                    <tabs:SchedulerTab x:Name="SchedTab"/>
+                </TabItem>
+                <TabItem x:Name="PluginsItem" Header="Plugins">
+                    <tabs:PluginsTab x:Name="PlugTab"/>
+                </TabItem>
+                <TabItem Header="Tunnels">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="12" MaxWidth="620" HorizontalAlignment="Left">
-                            <TextBlock Style="{StaticResource Label}" Text="Name"/>
-                            <TextBox x:Name="NameBox"/>
-
-                            <TextBlock Style="{StaticResource Label}" Text="Tunnel (how friends outside your Wi-Fi join)"/>
+                            <TextBlock Style="{StaticResource Label}" Margin="0,0,0,3" Text="Tunnel (how friends outside your Wi-Fi join)"/>
                             <ComboBox x:Name="TunnelBox" SelectionChanged="TunnelBox_SelectionChanged"/>
                             <TextBlock x:Name="TunnelHelp" Style="{StaticResource Help}"/>
 
@@ -127,6 +151,18 @@
                                 <PasswordBox x:Name="NgrokTokenBox"/>
                             </StackPanel>
 
+                            <TextBlock Style="{StaticResource Help}" Margin="0,14,0,0" Text="Changes apply the next time the server starts."/>
+                            <Button Content="Save" Style="{StaticResource Primary}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="Save_Click"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Settings">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12" MaxWidth="620" HorizontalAlignment="Left">
+                            <TextBlock Text="Server" FontWeight="Bold" FontSize="15"/>
+                            <TextBlock Style="{StaticResource Label}" Text="Name"/>
+                            <TextBox x:Name="NameBox"/>
+
                             <TextBlock Style="{StaticResource Label}" Text="Memory (MB)"/>
                             <TextBox x:Name="RamBox" Width="120" HorizontalAlignment="Left"/>
 
@@ -136,7 +172,10 @@
                             <TextBlock Style="{StaticResource Label}" Text="Java"/>
                             <ComboBox x:Name="JavaBox"/>
 
-                            <TextBlock Style="{StaticResource Help}" Margin="0,14,0,0" Text="Changes apply the next time the server starts."/>
+                            <tabs:GameSettingsPanel x:Name="GamePanel"/>
+
+                            <TextBlock Style="{StaticResource Help}" Margin="0,14,0,0"
+                                       Text="Server and game settings apply when the server (re)starts. Game rules change instantly."/>
                             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                                 <Button Content="Save" Style="{StaticResource Primary}" Click="Save_Click"/>
                                 <Button Content="Remove from list" Click="Remove_Click"
@@ -144,6 +183,9 @@
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Server Files">
+                    <tabs:FilesTab x:Name="FileTab"/>
                 </TabItem>
             </TabControl>
         </Grid>

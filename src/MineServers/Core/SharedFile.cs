@@ -18,9 +18,12 @@ public static class SharedFile
         return reader.ReadToEnd();
     });
 
+    /// <summary>Writes while letting the server keep its own handle open (it holds server.properties for its whole run).</summary>
     public static void WriteAllText(string path, string text) => Retry(() =>
     {
-        File.WriteAllText(path, text);
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        using var writer = new StreamWriter(fs);
+        writer.Write(text);
         return true;
     });
 

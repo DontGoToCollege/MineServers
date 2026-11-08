@@ -1,0 +1,43 @@
+<UserControl x:Class="MineServers.Tabs.PluginsTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Margin="12">
+        <TextBlock x:Name="UnsupportedText" Visibility="Collapsed" TextWrapping="Wrap" Foreground="#555" FontSize="14"
+                   Text="Vanilla servers can't load plugins or mods. Make a Paper server for plugins, or a Fabric server for mods."/>
+        <Grid x:Name="Panel">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
+
+            <DockPanel Margin="0,0,14,0">
+                <DockPanel DockPanel.Dock="Top">
+                    <Button DockPanel.Dock="Right" Content="Search" Margin="6,0,0,0" Click="Search_Click"/>
+                    <TextBox x:Name="QueryBox" VerticalContentAlignment="Center" KeyDown="QueryBox_KeyDown"/>
+                </DockPanel>
+                <TextBlock x:Name="SearchHelp" DockPanel.Dock="Top" Style="{StaticResource Help}" Margin="0,4,0,6"/>
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <TextBlock x:Name="DescriptionText" TextWrapping="Wrap" Foreground="#333" Margin="0,0,0,8"/>
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="InstallButton" Content="Install" Style="{StaticResource Primary}" Click="Install_Click"/>
+                        <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#555" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </StackPanel>
+                <ListBox x:Name="ResultList" SelectionChanged="ResultList_SelectionChanged"/>
+            </DockPanel>
+
+            <DockPanel Grid.Column="1">
+                <TextBlock x:Name="InstalledTitle" DockPanel.Dock="Top" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Turn on / off" Click="Toggle_Click"/>
+                        <Button Content="Remove" Click="Remove_Click"/>
+                    </StackPanel>
+                    <Button Content="Open folder" Margin="0,6,0,0" HorizontalAlignment="Left" Click="OpenFolder_Click"/>
+                    <TextBlock Style="{StaticResource Help}" Text="Restart the server to load changes."/>
+                </StackPanel>
+                <ListBox x:Name="InstalledList"/>
+            </DockPanel>
+        </Grid>
+    </Grid>
+</UserControl>

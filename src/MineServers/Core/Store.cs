@@ -21,6 +21,10 @@ public class ServerEntry
     public string? CustomTunnelPattern { get; set; }
     public string? ImportedFrom { get; set; }
     public bool SkipFirewallCheck { get; set; }     // the owner said not to open the port
+    public List<ScheduledTask> Tasks { get; set; } = new();
+    public List<string> CommandHistory { get; set; } = new();
+    /// <summary>server.properties changes made while the server ran; written just before the next start so the server can't overwrite them.</summary>
+    public Dictionary<string, string> PendingProperties { get; set; } = new();
 
     public override string ToString() => Name;
 }
