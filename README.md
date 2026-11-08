@@ -5,7 +5,7 @@ SquidServers only lets you tunnel through playit.gg. MineServers gives you a cho
 
 ## Download
 
-Get `MineServers.exe` from the [Releases page](https://github.com/DontGoToCollege/MineServers/releases/latest).
+Get `MineServers-<version>.exe` from the [Releases page](https://github.com/DontGoToCollege/MineServers/releases/latest).
 There's nothing to install. Put it in any folder and run it. It keeps everything (servers, worlds, downloaded Java and tunnel programs)
 in a `MineServers-Data` folder next to itself.
 
