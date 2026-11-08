@@ -73,6 +73,36 @@
                                  TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" BorderThickness="0" Padding="6"/>
                     </DockPanel>
                 </TabItem>
+                <TabItem Header="Players">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12" MaxWidth="620" HorizontalAlignment="Left">
+                            <CheckBox x:Name="WhitelistBox" Content="Whitelist: only players I've allowed can join" FontWeight="SemiBold"
+                                      Click="WhitelistBox_Click"/>
+                            <TextBlock Style="{StaticResource Help}"
+                                       Text="When someone who isn't allowed tries to join, MineServers asks whether to let them in. Say yes once and they can always join this server."/>
+
+                            <TextBlock x:Name="PlayersNote" Style="{StaticResource Help}" Foreground="#B45309" Margin="0,10,0,0"
+                                       Text="Start the server to add, remove, ban or unban players."/>
+
+                            <TextBlock Style="{StaticResource Label}" Text="Player name"/>
+                            <TextBox x:Name="PlayerNameBox" Width="220" HorizontalAlignment="Left"/>
+
+                            <TextBlock Style="{StaticResource Label}" Text="Allowed players (whitelist)"/>
+                            <ListBox x:Name="AllowedList" Height="120"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <Button Content="Allow name" Click="AllowPlayer_Click"/>
+                                <Button Content="Remove selected" Click="RemoveAllowed_Click"/>
+                            </StackPanel>
+
+                            <TextBlock Style="{StaticResource Label}" Text="Banned players"/>
+                            <ListBox x:Name="BannedList" Height="120"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <Button Content="Ban name" Click="BanPlayer_Click"/>
+                                <Button Content="Unban selected" Click="Unban_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
                 <TabItem Header="Settings">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Margin="12" MaxWidth="620" HorizontalAlignment="Left">

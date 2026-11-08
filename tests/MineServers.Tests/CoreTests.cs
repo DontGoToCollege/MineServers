@@ -44,6 +44,29 @@ public class CoreTests
     [InlineData(null, false)]
     public void ReadsFirewallPortLists(string? ports, bool has) => Assert.Equal(has, Firewall.PortListHas(ports, 25565));
 
+    [Theory]
+    [InlineData("[20:22:47] [Server thread/INFO]: Disconnecting DontGoToCollege (/192.168.1.226:49766): You are not whitelisted on this server!", "DontGoToCollege")]
+    [InlineData("[12:00:00] [Server thread/INFO]: Disconnecting Steve_2 (/10.0.0.5:5000): You are not white-listed on this server!", "Steve_2")]
+    [InlineData("[20:22:47] [Server thread/INFO]: DontGoToCollege (/192.168.1.226:49766) lost connection: You are not whitelisted on this server!", null)]
+    [InlineData("[20:22:47] [Server thread/INFO]: Disconnecting Alex (/1.2.3.4:5): Timed out", null)]
+    public void SpotsPlayersTurnedAwayByWhitelist(string line, string? name) => Assert.Equal(name, Players.RejectedName(line));
+
+    [Fact]
+    public void ReadsWhitelistNames()
+    {
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(dir, "whitelist.json"), """[{"uuid":"1","name":"zed"},{"uuid":"2","name":"Amy"}]""");
+        Assert.Equal(new[] { "Amy", "zed" }, Players.Allowed(dir));
+        Assert.Empty(Players.Banned(dir));
+        Directory.Delete(dir, true);
+    }
+
+    [Theory]
+    [InlineData("DontGoToCollege", true)]
+    [InlineData("ab", false)]
+    [InlineData("bob; stop", false)]
+    public void ChecksPlayerNames(string name, bool ok) => Assert.Equal(ok, Players.IsValidName(name));
+
     [Fact]
     public void SetsServerPropertyKeepingOtherLines()
     {

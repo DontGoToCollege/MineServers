@@ -18,6 +18,7 @@ public class ServerItem(ServerEntry entry) : INotifyPropertyChanged
     public Tunnel? Tunnel { get; set; }
     public string Address { get; set; } = "";
     public StringBuilder Log { get; } = new();
+    public HashSet<string> AskedAbout { get; } = new(StringComparer.OrdinalIgnoreCase); // don't ask twice in one run
     public string Subtitle => $"{Runner.State} · {Entry.Type} {Entry.Version}".Trim();
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -78,7 +79,11 @@ public partial class MainWindow : Window
     ServerItem Add(ServerEntry s)
     {
         var item = new ServerItem(s);
-        item.Runner.Output += line => Dispatcher.BeginInvoke(() => AppendLog(item, line));
+        item.Runner.Output += line => Dispatcher.BeginInvoke(() =>
+        {
+            AppendLog(item, line);
+            if (Players.RejectedName(line) is { } name) OfferToAllow(item, name);
+        });
         item.Runner.StateChanged += () => Dispatcher.BeginInvoke(() => OnStateChanged(item));
         _items.Add(item);
         return item;
@@ -111,6 +116,76 @@ public partial class MainWindow : Window
         JavaBox.ItemsSource = javaChoices;
         JavaBox.SelectedItem = _javas.FirstOrDefault(j => string.Equals(j.Exe, s.JavaPath, StringComparison.OrdinalIgnoreCase)) ?? javaChoices[0];
         RefreshHeader();
+        RefreshPlayers();
+    }
+
+    // ---------- players ----------
+
+    void RefreshPlayers()
+    {
+        if (Selected is not { } item) return;
+        var dir = item.Entry.Path;
+        WhitelistBox.IsChecked = ServerProperties.Get(Path.Combine(dir, "server.properties"), "white-list") == "true";
+        AllowedList.ItemsSource = Players.Allowed(dir);
+        BannedList.ItemsSource = Players.Banned(dir);
+        PlayersNote.Visibility = item.Runner.IsRunning ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Someone was turned away by the whitelist: one click lets them in for good.</summary>
+    void OfferToAllow(ServerItem item, string name)
+    {
+        if (!item.AskedAbout.Add(name)) return;
+        if (MessageBox.Show($"{name} tried to join \"{item.Entry.Name}\" but isn't on its whitelist.\n\nLet {name} join from now on?",
+                "MineServers", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        PlayerCommand(item, $"whitelist add {name}");
+        AppendLog(item, $"[MineServers] {name} can join now. Ask them to connect again.");
+    }
+
+    /// <summary>Runs a player command on the server, then reloads the lists once the server has saved them.</summary>
+    async void PlayerCommand(ServerItem item, string command)
+    {
+        if (!item.Runner.IsRunning)
+        {
+            MessageBox.Show("Start the server first, then try again.", "MineServers");
+            return;
+        }
+        AppendLog(item, "> " + command);
+        item.Runner.Send(command);
+        await Task.Delay(800);
+        if (item == Selected) RefreshPlayers();
+    }
+
+    void PlayerNameCommand(string verb)
+    {
+        var name = PlayerNameBox.Text.Trim();
+        if (!Players.IsValidName(name))
+        {
+            MessageBox.Show("Type a Minecraft name (3 to 16 letters, numbers or _).", "MineServers");
+            return;
+        }
+        if (Selected is { } item) PlayerCommand(item, $"{verb} {name}");
+        PlayerNameBox.Clear();
+    }
+
+    void AllowPlayer_Click(object sender, RoutedEventArgs e) => PlayerNameCommand("whitelist add");
+    void BanPlayer_Click(object sender, RoutedEventArgs e) => PlayerNameCommand("ban");
+
+    void RemoveAllowed_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is { } item && AllowedList.SelectedItem is string name) PlayerCommand(item, $"whitelist remove {name}");
+    }
+
+    void Unban_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is { } item && BannedList.SelectedItem is string name) PlayerCommand(item, $"pardon {name}");
+    }
+
+    void WhitelistBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } item) return;
+        bool on = WhitelistBox.IsChecked == true;
+        if (item.Runner.IsRunning) PlayerCommand(item, on ? "whitelist on" : "whitelist off"); // the server saves the setting itself
+        else ServerProperties.Set(Path.Combine(item.Entry.Path, "server.properties"), "white-list", on ? "true" : "false");
     }
 
     void RefreshHeader()
@@ -153,7 +228,7 @@ public partial class MainWindow : Window
             await t.Stop();
         }
         item.Refresh();
-        if (item == Selected) RefreshHeader();
+        if (item == Selected) { RefreshHeader(); RefreshPlayers(); }
     }
 
     // ---------- start / stop ----------
