@@ -18,9 +18,6 @@ if (Test-Path $archive) { throw "Version $version is already archived. Raise <Ve
 & $dotnet test (Join-Path $root "tests\MineServers.Tests")
 if ($LASTEXITCODE -ne 0) { throw "Tests failed; nothing was built." }
 
-# Windows can't replace an exe that's running.
-Get-Process MineServers -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$root*" } | Stop-Process -Force
-
 & $dotnet publish $proj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o $out
 if ($LASTEXITCODE -ne 0) { throw "Publish failed." }
@@ -29,6 +26,13 @@ Get-ChildItem $out -File | Where-Object { $_.Name -ne "MineServers.exe" } | Remo
 $exe = Join-Path $out "MineServers.exe"
 New-Item -ItemType Directory -Force (Split-Path $archive) | Out-Null
 Copy-Item $exe $archive
-Copy-Item $exe (Join-Path $root "MineServers.exe")
-Write-Host ("Done: MineServers.exe {0} ({1} MB), copy kept in Versions\Archive" -f $version, [math]::Round((Get-Item $exe).Length / 1MB, 1)) -ForegroundColor Green
-if ($Run) { Start-Process (Join-Path $root "MineServers.exe") }
+Write-Host ("Built MineServers {0} ({1} MB), copy kept in Versions\Archive" -f $version, [math]::Round((Get-Item $exe).Length / 1MB, 1)) -ForegroundColor Green
+
+# Never force-close a running MineServers: it may be hosting servers, and killing it would skip saving their worlds.
+$top = Join-Path $root "MineServers.exe"
+if (Get-Process MineServers -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $top }) {
+    Write-Host "MineServers.exe is running, so it wasn't replaced. Close it, then copy $archive over it." -ForegroundColor Yellow
+} else {
+    Copy-Item $exe $top
+    if ($Run) { Start-Process $top }
+}
