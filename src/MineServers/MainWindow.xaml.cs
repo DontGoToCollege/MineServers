@@ -34,9 +34,10 @@ public partial class MainWindow : Window
     readonly AppConfig _cfg = Store.Load();
     readonly ObservableCollection<ServerItem> _items = new();
     readonly List<JavaInstall> _javas = JavaFinder.FindAll();
-    bool _closing;
+    bool _closing, _updating;
 
     ServerItem? Selected => ServerList.SelectedItem as ServerItem;
+    static string ResumePath => Path.Combine(Store.DataDir, "resume.json");
 
     public MainWindow()
     {
@@ -46,6 +47,32 @@ public partial class MainWindow : Window
         foreach (var s in _cfg.Servers) Add(s);
         ServerList.ItemsSource = _items;
         if (_items.Count > 0) ServerList.SelectedIndex = 0;
+
+        // publish.ps1 signals this to swap in a new version: save worlds, close, and the new version restarts the servers.
+        var updateSignal = new EventWaitHandle(false, EventResetMode.AutoReset, $@"Local\MineServers-Close-{Environment.ProcessId}");
+        ThreadPool.RegisterWaitForSingleObject(updateSignal, (_, _) => Dispatcher.BeginInvoke(CloseForUpdate), null, -1, true);
+        Loaded += async (_, _) => await ResumeAfterUpdate();
+    }
+
+    void CloseForUpdate()
+    {
+        var ids = _items.Where(i => i.Runner.IsRunning).Select(i => i.Entry.Id).ToList();
+        File.WriteAllText(ResumePath, System.Text.Json.JsonSerializer.Serialize(ids));
+        _updating = true;
+        Close();
+    }
+
+    async Task ResumeAfterUpdate()
+    {
+        if (!File.Exists(ResumePath)) return;
+        var ids = System.Text.Json.JsonSerializer.Deserialize<List<string>>(File.ReadAllText(ResumePath)) ?? new();
+        File.Delete(ResumePath);
+        foreach (var item in _items.Where(i => ids.Contains(i.Entry.Id)).ToList())
+        {
+            ServerList.SelectedItem = item;
+            AppendLog(item, $"[MineServers] Updated to {AppInfo.Version}; starting the server again.");
+            await StartServer(item);
+        }
     }
 
     ServerItem Add(ServerEntry s)
@@ -133,8 +160,11 @@ public partial class MainWindow : Window
 
     async void Start_Click(object sender, RoutedEventArgs e)
     {
-        var item = Selected;
-        if (item == null) return;
+        if (Selected is { } item) await StartServer(item);
+    }
+
+    async Task StartServer(ServerItem item)
+    {
         var progress = new Progress<string>(m => AppendLog(item, "[MineServers] " + m));
         await CheckFirewall(item);
         try
@@ -325,7 +355,7 @@ public partial class MainWindow : Window
         if (_closing) return;
         e.Cancel = true;
         var running = _items.Where(i => i.Runner.IsRunning).ToList();
-        if (running.Count > 0 && MessageBox.Show($"Stop {running.Count} running server(s) and close MineServers?\nWorlds are saved first.",
+        if (running.Count > 0 && !_updating && MessageBox.Show($"Stop {running.Count} running server(s) and close MineServers?\nWorlds are saved first.",
                 "MineServers", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         _closing = true;
         IsEnabled = false;
@@ -333,6 +363,7 @@ public partial class MainWindow : Window
         await Task.WhenAll(running.Select(i => i.Runner.Stop()));
         await Task.WhenAll(_items.Where(i => i.Tunnel != null).Select(i => i.Tunnel!.Stop()));
         PlayitTunnel.StopAgent();
-        Close();
+        // Posted, not called: if nothing above had to wait, we're still inside this Closing event, where Close() throws.
+        _ = Dispatcher.BeginInvoke(Close);
     }
 }
