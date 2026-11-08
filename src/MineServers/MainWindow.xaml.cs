@@ -136,6 +136,7 @@ public partial class MainWindow : Window
         var item = Selected;
         if (item == null) return;
         var progress = new Progress<string>(m => AppendLog(item, "[MineServers] " + m));
+        await CheckFirewall(item);
         try
         {
             await item.Runner.Start(item.Entry, progress);
@@ -165,6 +166,38 @@ public partial class MainWindow : Window
             await tunnel.Stop();
         }
         if (item == Selected) RefreshHeader();
+    }
+
+    /// <summary>LAN and UPnP players connect straight to this PC, so Windows Firewall must let the port in.</summary>
+    async Task CheckFirewall(ServerItem item)
+    {
+        var s = item.Entry;
+        if (s.Tunnel is not (TunnelKinds.None or TunnelKinds.Upnp) || s.SkipFirewallCheck) return;
+        try
+        {
+            if (await Task.Run(() => Firewall.IsAllowed(s.Port))) return;
+        }
+        catch (Exception ex)
+        {
+            AppendLog(item, "[MineServers] Couldn't check Windows Firewall: " + ex.Message);
+            return;
+        }
+        var answer = MessageBox.Show(
+            $"Windows Firewall is blocking port {s.Port}, so other computers can't join (they get \"Connection timed out\").\n\n"
+            + $"Allow Minecraft through the firewall on port {s.Port}? Windows will ask for your permission.\n\n"
+            + "Choose No to leave the firewall alone and not be asked again for this server.",
+            "MineServers", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        if (answer == MessageBoxResult.No)
+        {
+            s.SkipFirewallCheck = true;
+            Save();
+        }
+        else if (answer == MessageBoxResult.Yes)
+        {
+            AppendLog(item, await Firewall.Allow(s.Port)
+                ? $"[MineServers] Windows Firewall now allows port {s.Port}."
+                : "[MineServers] The firewall wasn't changed, so other computers may still time out.");
+        }
     }
 
     async void Stop_Click(object sender, RoutedEventArgs e)

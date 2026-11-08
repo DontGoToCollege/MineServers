@@ -33,6 +33,14 @@ existing folders, so nothing is copied or changed. Don't run the same server in 
 | ngrok | Free ngrok account | Changes each start | Paste your authtoken in Settings. ngrok asks for a card on file before allowing TCP tunnels. |
 | Custom command | Depends | Whatever it prints | Run any tunnel program. Put `{port}` where the server port goes. MineServers shows the first `host:port` it prints. |
 
+## If friends get "Connection timed out"
+
+With the **None (LAN)** or **UPnP** tunnel, other computers connect straight to your PC, and Windows Firewall blocks that by default.
+When you start such a server, MineServers checks and offers to allow its port. Click **Yes**, then approve the Windows prompt.
+Also make sure friends use the address shown in **Join address**. Your PC may have other `192.168…` addresses (from VirtualBox or Hyper-V) that don't work.
+
+The other tunnels (playit.gg, bore, Pinggy, ngrok) don't need any firewall change.
+
 ## Building it yourself
 
 Needs the .NET 8 SDK. Run `.\publish.ps1`: it runs the tests and builds `MineServers.exe`.

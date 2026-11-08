@@ -20,6 +20,7 @@ public class ServerEntry
     public string? CustomTunnelCommand { get; set; }
     public string? CustomTunnelPattern { get; set; }
     public string? ImportedFrom { get; set; }
+    public bool SkipFirewallCheck { get; set; }     // the owner said not to open the port
 
     public override string ToString() => Name;
 }

@@ -35,6 +35,15 @@ public class CoreTests
     public void IgnoresLinesWithoutAddress() =>
         Assert.Null(ProcessTunnel.FindAddress("Connecting to bore.pub...", @"(bore\.pub:\d+)"));
 
+    [Theory]
+    [InlineData("25565", true)]
+    [InlineData("80, 25565", true)]
+    [InlineData("25560-25570", true)]
+    [InlineData("25566", false)]
+    [InlineData("*", false)]
+    [InlineData(null, false)]
+    public void ReadsFirewallPortLists(string? ports, bool has) => Assert.Equal(has, Firewall.PortListHas(ports, 25565));
+
     [Fact]
     public void SetsServerPropertyKeepingOtherLines()
     {
