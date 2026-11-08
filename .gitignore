@@ -1,0 +1,15 @@
+# Built programs go on the GitHub Releases page, not in the code history
+*.exe
+Versions/
+dist/
+publish/
+
+# The app's own data (servers, worlds, keys) when run from this folder
+MineServers-Data/
+
+# Build leftovers
+bin/
+obj/
+.vs/
+*.user
+TestResults/
