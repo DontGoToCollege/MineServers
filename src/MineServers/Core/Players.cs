@@ -24,7 +24,7 @@ public static class Players
         try
         {
             if (!File.Exists(file)) return new();
-            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            using var doc = JsonDocument.Parse(SharedFile.ReadAllText(file));
             return doc.RootElement.EnumerateArray()
                 .Select(e => e.TryGetProperty("name", out var n) ? n.GetString() : null)
                 .OfType<string>().OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();

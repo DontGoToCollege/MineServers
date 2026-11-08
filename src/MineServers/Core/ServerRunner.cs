@@ -123,14 +123,20 @@ public static class ServerProperties
     /// <summary>Sets one key in server.properties, keeping every other line as it was.</summary>
     public static void Set(string file, string key, string value)
     {
-        var lines = File.Exists(file) ? File.ReadAllLines(file).ToList() : new List<string>();
+        var lines = File.Exists(file) ? Lines(file) : new List<string>();
         var i = lines.FindIndex(l => l.StartsWith(key + "=", StringComparison.Ordinal));
         if (i >= 0) lines[i] = $"{key}={value}"; else lines.Add($"{key}={value}");
-        File.WriteAllLines(file, lines);
+        SharedFile.WriteAllText(file, string.Join(Environment.NewLine, lines) + Environment.NewLine);
     }
 
     public static string? Get(string file, string key) =>
         File.Exists(file)
-            ? File.ReadLines(file).FirstOrDefault(l => l.StartsWith(key + "=", StringComparison.Ordinal))?[(key.Length + 1)..]
+            ? Lines(file).FirstOrDefault(l => l.StartsWith(key + "=", StringComparison.Ordinal))?[(key.Length + 1)..]
             : null;
+
+    static List<string> Lines(string file)
+    {
+        var text = SharedFile.ReadAllText(file).ReplaceLineEndings("\n").TrimEnd('\n');
+        return text.Length == 0 ? new() : text.Split('\n').ToList();
+    }
 }

@@ -68,6 +68,30 @@ public class CoreTests
     public void ChecksPlayerNames(string name, bool ok) => Assert.Equal(ok, Players.IsValidName(name));
 
     [Fact]
+    public async Task WaitsForServerToReleaseLockedProperties()
+    {
+        var f = Path.GetTempFileName();
+        File.WriteAllLines(f, new[] { "white-list=true", "server-port=25565" });
+        var locked = new FileStream(f, FileMode.Open, FileAccess.ReadWrite, FileShare.None); // like a server mid-save
+        _ = Task.Delay(700).ContinueWith(_ => locked.Dispose());
+
+        await Task.Run(() => ServerProperties.Set(f, "white-list", "false"));
+
+        Assert.Equal(new[] { "white-list=false", "server-port=25565" }, File.ReadAllLines(f));
+        File.Delete(f);
+    }
+
+    [Fact]
+    public void ReadsPropertiesWhileServerHasThemOpenForWriting()
+    {
+        var f = Path.GetTempFileName();
+        File.WriteAllText(f, "white-list=true\n");
+        using (new FileStream(f, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+            Assert.Equal("true", ServerProperties.Get(f, "white-list"));
+        File.Delete(f);
+    }
+
+    [Fact]
     public void SetsServerPropertyKeepingOtherLines()
     {
         var f = Path.GetTempFileName();

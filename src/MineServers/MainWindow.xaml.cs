@@ -125,7 +125,8 @@ public partial class MainWindow : Window
     {
         if (Selected is not { } item) return;
         var dir = item.Entry.Path;
-        WhitelistBox.IsChecked = ServerProperties.Get(Path.Combine(dir, "server.properties"), "white-list") == "true";
+        try { WhitelistBox.IsChecked = ServerProperties.Get(Path.Combine(dir, "server.properties"), "white-list") == "true"; }
+        catch (IOException) { } // still busy after waiting: keep showing the last known state
         AllowedList.ItemsSource = Players.Allowed(dir);
         BannedList.ItemsSource = Players.Banned(dir);
         PlayersNote.Visibility = item.Runner.IsRunning ? Visibility.Collapsed : Visibility.Visible;
@@ -185,7 +186,15 @@ public partial class MainWindow : Window
         if (Selected is not { } item) return;
         bool on = WhitelistBox.IsChecked == true;
         if (item.Runner.IsRunning) PlayerCommand(item, on ? "whitelist on" : "whitelist off"); // the server saves the setting itself
-        else ServerProperties.Set(Path.Combine(item.Entry.Path, "server.properties"), "white-list", on ? "true" : "false");
+        else
+        {
+            try { ServerProperties.Set(Path.Combine(item.Entry.Path, "server.properties"), "white-list", on ? "true" : "false"); }
+            catch (IOException ex)
+            {
+                WhitelistBox.IsChecked = !on; // show what's really in the file
+                MessageBox.Show("Couldn't change the whitelist setting because another program is holding server.properties open:\n\n" + ex.Message, "MineServers");
+            }
+        }
     }
 
     void RefreshHeader()
