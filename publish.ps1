@@ -1,6 +1,7 @@
 # Builds MineServers as one portable exe.
 # Usage:  .\publish.ps1        -> runs the tests, then MineServers.exe (+ Versions\Archive\MineServers-<version>.exe)
-#         .\publish.ps1 -Run   -> same, then starts it
+#                                  A running MineServers is closed (worlds saved) and restarted on the new version.
+#         .\publish.ps1 -Run   -> same, and starts it even if it wasn't running
 # Refuses a version that's already archived: raise <Version> in src\MineServers\MineServers.csproj first.
 param([switch]$Run)
 
@@ -28,11 +29,25 @@ New-Item -ItemType Directory -Force (Split-Path $archive) | Out-Null
 Copy-Item $exe $archive
 Write-Host ("Built MineServers {0} ({1} MB), copy kept in Versions\Archive" -f $version, [math]::Round((Get-Item $exe).Length / 1MB, 1)) -ForegroundColor Green
 
-# Never force-close a running MineServers: it may be hosting servers, and killing it would skip saving their worlds.
+# A running MineServers is closed so the new version can replace it (the owner's standing wish), then started again.
+# It closes the way its Close button does: worlds are saved and servers stopped, never killed mid-save,
+# and the new version starts those servers again.
 $top = Join-Path $root "MineServers.exe"
-if (Get-Process MineServers -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $top }) {
-    Write-Host "MineServers.exe is running, so it wasn't replaced. Close it, then copy $archive over it." -ForegroundColor Yellow
-} else {
-    Copy-Item $exe $top
-    if ($Run) { Start-Process $top }
+$running = @(Get-Process MineServers -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $top })
+foreach ($p in $running) {
+    try {
+        [System.Threading.EventWaitHandle]::OpenExisting("Local\MineServers-Close-$($p.Id)").Set() | Out-Null
+        Write-Host "Asked MineServers to save its worlds and close..."
+    } catch {
+        # Versions before 1.2.0 have no update signal: close it normally (it asks before stopping servers).
+        Write-Host "Closing MineServers. If it asks about running servers, click Yes." -ForegroundColor Yellow
+        $p.CloseMainWindow() | Out-Null
+    }
+    if (-not $p.WaitForExit(180000)) { throw "MineServers didn't close within 3 minutes, so it wasn't replaced." }
+}
+Copy-Item $exe $top
+Write-Host "MineServers.exe is now $version." -ForegroundColor Green
+if ($running.Count -gt 0 -or $Run) {
+    # Started through Windows (not as this script's child) so it keeps running after the build.
+    Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "`"$top`""; CurrentDirectory = $root } | Out-Null
 }
