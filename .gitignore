@@ -13,3 +13,6 @@ obj/
 .vs/
 *.user
 TestResults/
+
+# Handoff notes (local only)
+.claude/handoffs/
