@@ -89,10 +89,81 @@ public class GameSettingsPanel : StackPanel
                 var box = new TextBox { Text = value, Width = d.Kind == "int" ? 120 : 400, HorizontalAlignment = HorizontalAlignment.Left };
                 _readers[d.Key] = () => d.Kind == "int" && int.TryParse(box.Text.Trim(), out var n) ? Math.Clamp(n, d.Min, d.Max).ToString() : d.Kind == "int" ? value : box.Text;
                 row.Children.Add(box);
+                if (d.Key == "motd") AddMotdTools(row, box);
                 break;
         }
         if (d.Help != null) row.Children.Add(Help(d.Help));
         return row;
+    }
+
+    // Minecraft's 16 chat colours, by code.
+    const string ColorCodes = "0123456789abcdef";
+    static readonly string[] ColorHex =
+    {
+        "#000000", "#0000AA", "#00AA00", "#00AAAA", "#AA0000", "#AA00AA", "#FFAA00", "#AAAAAA",
+        "#555555", "#5555FF", "#55FF55", "#55FFFF", "#FF5555", "#FF55FF", "#FFFF55", "#FFFFFF",
+    };
+
+    /// <summary>Colour buttons that insert § codes, and a preview of how the message looks in the server list.</summary>
+    static void AddMotdTools(StackPanel row, TextBox box)
+    {
+        var swatches = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        for (int i = 0; i < 16; i++)
+        {
+            var code = "§" + ColorCodes[i];
+            var b = new Button { Width = 22, Height = 22, MinWidth = 0, Padding = new Thickness(0), Margin = new Thickness(0, 0, 3, 0),
+                Background = (Brush)new BrushConverter().ConvertFrom(ColorHex[i])!, ToolTip = "Text after this is this colour" };
+            b.Click += (_, _) => Insert(box, code);
+            swatches.Children.Add(b);
+        }
+        foreach (var (code, label, tip) in new[] { ("§l", "B", "Bold"), ("§o", "I", "Italic"), ("§n", "U", "Underline"), ("§r", "Reset", "Back to plain text") })
+        {
+            var b = new Button { Content = label, MinWidth = 0, Padding = new Thickness(6, 0, 6, 0), Height = 22, Margin = new Thickness(0, 0, 3, 0), ToolTip = tip };
+            b.Click += (_, _) => Insert(box, code);
+            swatches.Children.Add(b);
+        }
+        var preview = new TextBlock { Padding = new Thickness(8, 6, 8, 6), FontFamily = new FontFamily("Consolas"), TextWrapping = TextWrapping.Wrap };
+        box.TextChanged += (_, _) => RenderMotd(preview, box.Text);
+        RenderMotd(preview, box.Text);
+        row.Children.Add(swatches);
+        row.Children.Add(new Border { Background = Brushes.Black, Width = 400, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0), Child = preview });
+    }
+
+    static void Insert(TextBox box, string code)
+    {
+        var at = box.CaretIndex;
+        box.Text = box.Text.Insert(at, code);
+        box.CaretIndex = at + code.Length;
+        box.Focus();
+    }
+
+    static void RenderMotd(TextBlock preview, string text)
+    {
+        preview.Inlines.Clear();
+        Brush color = (Brush)new BrushConverter().ConvertFrom("#AAAAAA")!; // the server list shows plain text in grey
+        bool bold = false, italic = false, underline = false;
+        var parts = text.Split('§');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var part = parts[i];
+            if (i > 0 && part.Length > 0)
+            {
+                var c = char.ToLowerInvariant(part[0]);
+                part = part[1..];
+                if (ColorCodes.IndexOf(c) is var k and >= 0) { color = (Brush)new BrushConverter().ConvertFrom(ColorHex[k])!; bold = italic = underline = false; }
+                else if (c == 'l') bold = true;
+                else if (c == 'o') italic = true;
+                else if (c == 'n') underline = true;
+                else if (c == 'r') { color = (Brush)new BrushConverter().ConvertFrom("#AAAAAA")!; bold = italic = underline = false; }
+            }
+            if (part.Length == 0) continue;
+            var run = new System.Windows.Documents.Run(part) { Foreground = color };
+            if (bold) run.FontWeight = FontWeights.Bold;
+            if (italic) run.FontStyle = FontStyles.Italic;
+            if (underline) run.TextDecorations = TextDecorations.Underline;
+            preview.Inlines.Add(run);
+        }
+        if (preview.Inlines.Count == 0) preview.Inlines.Add(new System.Windows.Documents.Run(" "));
     }
 
     UIElement RuleRow(RuleDef rule, string name, string value)

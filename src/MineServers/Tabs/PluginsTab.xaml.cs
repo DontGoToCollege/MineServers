@@ -28,11 +28,78 @@ public partial class PluginsTab : UserControl
         InstalledTitle.Text = $"Installed {noun}s";
         InstalledList.ItemsSource = Modrinth.Installed(item.Entry.Path, item.Entry.Type)
             .Select(f => f.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase) ? $"{f[..^9]}  (off)" : f).ToList();
+        BedrockPanel.Visibility = item.Entry.Type == "paper" ? Visibility.Visible : Visibility.Collapsed;
+        bool geyser = Geyser.Installed(item.Entry.Path);
+        BedrockButton.IsEnabled = !geyser;
+        BedrockButton.Content = geyser ? "Bedrock players can join (installed)" : "Let Bedrock players join";
         if (changed)
         {
             ResultList.ItemsSource = null;
-            DescriptionText.Text = StatusText.Text = "";
+            DescriptionText.Text = StatusText.Text = UpdatesText.Text = "";
+            _updates.Clear();
+            UpdateButton.IsEnabled = false;
         }
+    }
+
+    List<ModUpdate> _updates = new();
+
+    async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        if (_item is not { } item) return;
+        CheckButton.IsEnabled = false;
+        UpdatesText.Text = "Checking Modrinth...";
+        try
+        {
+            _updates = await Modrinth.CheckUpdates(item.Entry.Path, item.Entry.Type, item.Entry.Version);
+            UpdatesText.Text = _updates.Count == 0 ? "Everything is up to date (add-ons not from Modrinth can't be checked)."
+                : $"{_updates.Count} update(s):\n" + string.Join("\n", _updates);
+        }
+        catch (Exception ex) { UpdatesText.Text = "Couldn't check: " + ex.Message; }
+        CheckButton.IsEnabled = true;
+        UpdateButton.IsEnabled = _updates.Count > 0;
+    }
+
+    async void UpdateAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (_item is not { } item) return;
+        if (item.Runner.State != "Stopped") { MessageBox.Show("Stop the server first: Windows won't let files in use be replaced.", "MineServers"); return; }
+        UpdateButton.IsEnabled = false;
+        var failed = new List<string>();
+        foreach (var u in _updates)
+        {
+            UpdatesText.Text = $"Updating {u.OldFile}...";
+            try { await Modrinth.ApplyUpdate(item.Entry.Path, item.Entry.Type, u); }
+            catch (Exception ex) { failed.Add($"{u.OldFile}: {ex.Message}"); }
+        }
+        UpdatesText.Text = failed.Count == 0 ? $"Updated {_updates.Count} add-on(s)." : "Some couldn't be updated:\n" + string.Join("\n", failed);
+        _updates.Clear();
+        if (_item == item) Show(item);
+    }
+
+    async void Bedrock_Click(object sender, RoutedEventArgs e)
+    {
+        if (_item is not { } item) return;
+        BedrockButton.IsEnabled = false;
+        try
+        {
+            await Geyser.Install(item.Entry.Path, new Progress<string>(m => StatusText.Text = m));
+            StatusText.Text = "";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Couldn't install Geyser: " + ex.Message;
+            Show(item);
+            return;
+        }
+        // LAN and UPnP Bedrock players connect straight in on UDP, which Windows Firewall blocks by default.
+        bool allowed = true;
+        try { allowed = await Task.Run(() => Firewall.IsAllowed(Geyser.BedrockPort, udp: true)); } catch (Exception) { }
+        if (!allowed && MessageBox.Show($"Windows Firewall blocks Bedrock's port ({Geyser.BedrockPort}, UDP). Allow it? Windows will ask for your permission.",
+                "MineServers", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            await Firewall.Allow(Geyser.BedrockPort, udp: true);
+        MessageBox.Show("Geyser and Floodgate are installed. Restart the server to turn them on.\n\n"
+                        + Geyser.JoinInfo(item.Entry, item.Address) + "\n\nBedrock players don't need a Java account.", "MineServers");
+        if (_item == item) Show(item);
     }
 
     async void Search_Click(object sender, RoutedEventArgs e) => await Search();

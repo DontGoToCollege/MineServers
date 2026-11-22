@@ -7,7 +7,8 @@ namespace MineServers.Core;
 /// <summary>Whitelist and ban lists. Changes go through the server's own commands so it looks up each player's account itself.</summary>
 public static class Players
 {
-    static readonly Regex Rejected = new(@"Disconnecting (\w{3,16}) .*not white-?listed", RegexOptions.IgnoreCase);
+    // Bedrock players (Geyser + Floodgate) get a "." in front of their name.
+    static readonly Regex Rejected = new(@"Disconnecting (\.?\w{3,16}) .*not white-?listed", RegexOptions.IgnoreCase);
 
     /// <summary>The player name in a "not whitelisted" kick line from the server log, or null.</summary>
     public static string? RejectedName(string line)
@@ -17,11 +18,12 @@ public static class Players
     }
 
     // 26.x: "Name[/1.2.3.4:5] logged in with entity id 7 at ..." and "System chat: Name left the game".
-    static readonly Regex JoinedLine = new(@"\]: (\w{3,16})\[/[^\]]*\] logged in with entity id");
-    static readonly Regex LeftLine = new(@"\]: (?:System chat: )?(\w{3,16}) left the game");
+    static readonly Regex JoinedLine = new(@"\]: (\.?\w{3,16})\[/([^\]:]*)[^\]]*\] logged in with entity id");
+    static readonly Regex LeftLine = new(@"\]: (?:System chat: )?(\.?\w{3,16}) left the game");
     static readonly Regex ListLine = new(@"There are \d+ of a max(?: of)? \d+ players online:(.*)$");
 
     public static string? JoinedName(string line) => JoinedLine.Match(line) is { Success: true } m ? m.Groups[1].Value : null;
+    public static string? JoinedIp(string line) => JoinedLine.Match(line) is { Success: true } m ? m.Groups[2].Value : null;
     public static string? LeftName(string line) => LeftLine.Match(line) is { Success: true } m ? m.Groups[1].Value : null;
 
     /// <summary>Names from the reply to the "list" command, or null if the line isn't that reply.</summary>
@@ -33,15 +35,19 @@ public static class Players
     public static List<string> Allowed(string serverDir) => Names(Path.Combine(serverDir, "whitelist.json"));
     public static List<string> Banned(string serverDir) => Names(Path.Combine(serverDir, "banned-players.json"));
     public static List<string> Operators(string serverDir) => Names(Path.Combine(serverDir, "ops.json"));
+    public static List<string> BannedIps(string serverDir) => Names(Path.Combine(serverDir, "banned-ips.json"), "ip");
 
-    static List<string> Names(string file)
+    /// <summary>An IPv4 or IPv6 address, so it's safe to put in a console command.</summary>
+    public static bool IsValidIp(string ip) => System.Net.IPAddress.TryParse(ip, out _) && Regex.IsMatch(ip, @"^[0-9a-fA-F.:]+$");
+
+    static List<string> Names(string file, string field = "name")
     {
         try
         {
             if (!File.Exists(file)) return new();
             using var doc = JsonDocument.Parse(SharedFile.ReadAllText(file));
             return doc.RootElement.EnumerateArray()
-                .Select(e => e.TryGetProperty("name", out var n) ? n.GetString() : null)
+                .Select(e => e.TryGetProperty(field, out var n) ? n.GetString() : null)
                 .OfType<string>().OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
         }
         catch (Exception e) when (e is IOException or JsonException)

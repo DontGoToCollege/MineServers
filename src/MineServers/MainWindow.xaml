@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:tabs="clr-namespace:MineServers.Tabs"
         Title="MineServers" Width="1100" Height="720" MinWidth="800" MinHeight="500"
-        Background="#F3F4F6" WindowStartupLocation="CenterScreen" Closing="OnClosing">
+        Background="#F3F4F6" WindowStartupLocation="CenterScreen" Closing="OnClosing" StateChanged="Window_StateChanged">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="260"/>
@@ -15,7 +15,8 @@
             <TextBlock DockPanel.Dock="Top" Text="MineServers" Foreground="White" FontSize="22" FontWeight="Bold" Margin="16,16,16,12"/>
             <StackPanel DockPanel.Dock="Bottom" Margin="12">
                 <Button Content="+ New server" Style="{StaticResource Primary}" Margin="0,0,0,6" Click="NewServer_Click"/>
-                <Button Content="Import from SquidServers" Margin="0" Click="Import_Click"/>
+                <Button Content="Import from SquidServers" Margin="0,0,0,6" Click="Import_Click"/>
+                <Button Content="App settings" Margin="0" Click="AppSettings_Click"/>
             </StackPanel>
             <ListBox x:Name="ServerList" Background="Transparent" BorderThickness="0" Foreground="White"
                      SelectionChanged="ServerList_SelectionChanged" HorizontalContentAlignment="Stretch">
@@ -57,6 +58,8 @@
             <Border Grid.Row="1" Background="White" CornerRadius="6" Padding="12" Margin="0,14,0,10" BorderBrush="#DDD" BorderThickness="1">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Left" Text="Join address:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <Button x:Name="ReachButton" DockPanel.Dock="Right" Content="Can friends join?" Margin="8,0,0,0" Click="Reach_Click"
+                            ToolTip="Tests the join address from the internet and says plainly whether it works."/>
                     <Button DockPanel.Dock="Right" Content="Copy" Margin="8,0,0,0" Click="Copy_Click"/>
                     <TextBox x:Name="AddressBox" IsReadOnly="True" FontSize="15" FontFamily="Consolas" VerticalContentAlignment="Center" BorderThickness="0"/>
                 </DockPanel>
@@ -71,8 +74,22 @@
                             <TextBox x:Name="CommandBox" FontFamily="Consolas" VerticalContentAlignment="Center" PreviewKeyDown="CommandBox_PreviewKeyDown"
                                      ToolTip="Type a server command (without /) and press Enter, e.g. op YourName. Up and Down go through earlier commands."/>
                         </DockPanel>
-                        <TextBox x:Name="ConsoleBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12" Background="#111827" Foreground="#E5E7EB"
-                                 TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" BorderThickness="0" Padding="6"/>
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                            <Button DockPanel.Dock="Right" Content="Old logs..." Margin="6,0,0,0" Click="OldLogs_Click"
+                                    ToolTip="Read the server's earlier log files."/>
+                            <TextBlock DockPanel.Dock="Left" Text="Find:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <TextBox x:Name="FilterBox" VerticalContentAlignment="Center" TextChanged="FilterBox_TextChanged"
+                                     ToolTip="Shows only lines containing this text. Warnings are yellow, errors red. Select lines and press Ctrl+C to copy them."/>
+                        </DockPanel>
+                        <ListBox x:Name="ConsoleList" FontFamily="Consolas" FontSize="12" Background="#111827" BorderThickness="0" Padding="4"
+                                 SelectionMode="Extended" KeyDown="ConsoleList_KeyDown" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Text}" Foreground="{Binding Color}" TextWrapping="Wrap"/>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
                     </DockPanel>
                 </TabItem>
                 <TabItem Header="Performance">
@@ -87,8 +104,26 @@
                                 <Button Content="Kick" Click="Kick_Click"/>
                                 <Button Content="Make operator" Click="OpOnline_Click"/>
                                 <Button Content="Ban" Click="BanOnline_Click"/>
+                                <Button Content="Ban IP" Click="BanIpOnline_Click" ToolTip="Bans their internet address, so other accounts from there can't join either."/>
                                 <Button Content="Refresh" Click="RefreshOnline_Click"/>
                             </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <TextBlock Text="Game mode" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <ComboBox x:Name="GameModeBox" Width="110" SelectedIndex="0">
+                                    <ComboBoxItem Content="survival"/>
+                                    <ComboBoxItem Content="creative"/>
+                                    <ComboBoxItem Content="adventure"/>
+                                    <ComboBoxItem Content="spectator"/>
+                                </ComboBox>
+                                <Button Content="Set" Margin="6,0,16,0" Click="GameMode_Click"/>
+                                <TextBlock Text="Teleport to" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <ComboBox x:Name="TeleportBox" Width="140"/>
+                                <Button Content="Go" Margin="6,0,0,0" Click="Teleport_Click"/>
+                            </StackPanel>
+                            <DockPanel Margin="0,6,0,0">
+                                <Button DockPanel.Dock="Right" Content="Send message" Margin="6,0,0,0" Click="Tell_Click"/>
+                                <TextBox x:Name="TellBox" VerticalContentAlignment="Center" ToolTip="A private message to the selected player."/>
+                            </DockPanel>
 
                             <TextBlock Style="{StaticResource Label}" Margin="0,16,0,3" Text="Operators (can use cheats and commands)"/>
                             <ListBox x:Name="OpsList" Height="80"/>
@@ -121,8 +156,18 @@
                                 <Button Content="Ban name" Click="BanPlayer_Click"/>
                                 <Button Content="Unban selected" Click="Unban_Click"/>
                             </StackPanel>
+
+                            <TextBlock Style="{StaticResource Label}" Text="Banned internet addresses (IP bans)"/>
+                            <ListBox x:Name="BannedIpList" Height="80"/>
+                            <Button Content="Unban selected address" HorizontalAlignment="Left" Margin="0,6,0,0" Click="UnbanIp_Click"/>
+
+                            <TextBlock Style="{StaticResource Label}" Text="Everyone who has joined (playtime counted from MineServers 1.5.0)"/>
+                            <ListBox x:Name="KnownList" Height="140" FontFamily="Consolas"/>
                         </StackPanel>
                     </ScrollViewer>
+                </TabItem>
+                <TabItem Header="World">
+                    <tabs:WorldTab x:Name="WorldTab"/>
                 </TabItem>
                 <TabItem Header="Scheduler">
                     <tabs:SchedulerTab x:Name="SchedTab"/>
@@ -171,6 +216,29 @@
 
                             <TextBlock Style="{StaticResource Label}" Text="Java"/>
                             <ComboBox x:Name="JavaBox"/>
+
+                            <CheckBox x:Name="RestartOnCrashBox" Margin="0,12,0,0" Content="Restart automatically if it crashes"
+                                      ToolTip="Up to 3 times in 10 minutes. You get an alert by the clock either way."/>
+                            <CheckBox x:Name="AutoStartBox" Margin="0,6,0,0" Content="Start this server when MineServers opens"
+                                      ToolTip="Turn on &quot;Start MineServers with Windows&quot; in App settings too, to have it running after every restart of the PC."/>
+                            <CheckBox x:Name="AikarBox" Margin="0,6,0,0" Content="Use recommended Java settings for smoother play (Aikar's flags)"
+                                      ToolTip="Tuned memory settings most server hosts use; fewer lag spikes. Applies at the next start."/>
+
+                            <TextBlock Style="{StaticResource Label}" Text="Server icon (shown in the server list)"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Border BorderBrush="#DDD" BorderThickness="1" Width="66" Height="66" Background="White">
+                                    <Image x:Name="IconImage" Width="64" Height="64"/>
+                                </Border>
+                                <Button Content="Choose picture..." Margin="10,0,0,0" VerticalAlignment="Center" Click="Icon_Click"/>
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Help}" Text="Any picture works: it's cropped to a square and shrunk to 64×64. Players see it after the next restart."/>
+
+                            <TextBlock Style="{StaticResource Label}" Text="Upgrade to a newer Minecraft version"/>
+                            <StackPanel Orientation="Horizontal">
+                                <ComboBox x:Name="UpgradeBox" Width="160" DropDownOpened="UpgradeBox_DropDownOpened"/>
+                                <Button x:Name="UpgradeButton" Content="Upgrade" Margin="6,0,0,0" Click="Upgrade_Click"/>
+                            </StackPanel>
+                            <TextBlock x:Name="UpgradeHelp" Style="{StaticResource Help}"/>
 
                             <tabs:GameSettingsPanel x:Name="GamePanel"/>
 

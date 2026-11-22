@@ -54,6 +54,13 @@ public static class GameSettings
             new("spawn-monsters", "Monsters spawn", "bool"),
             new("max-world-size", "World border radius (blocks)", "int", Min: 1, Max: 29999984),
         }),
+        ("Resource pack", new PropertyDef[]
+        {
+            new("resource-pack", "Resource pack download link", "text",
+                Help: "A direct link to a .zip (for example from mediafire, Dropbox with ?dl=1, or GitHub). Players are offered it when they join."),
+            new("require-resource-pack", "Players must accept the pack to play", "bool"),
+            new("resource-pack-prompt", "Message shown when the pack is offered", "text"),
+        }),
         ("Access and security", new PropertyDef[]
         {
             new("online-mode", "Require real Minecraft accounts (online mode)", "bool",

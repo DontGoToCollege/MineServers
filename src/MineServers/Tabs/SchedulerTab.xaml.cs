@@ -42,6 +42,8 @@ public partial class SchedulerTab : UserControl
         IntervalBox.Text = t.IntervalMinutes.ToString();
         TimeBox.Text = t.Time;
         DayBox.SelectedItem = t.Day;
+        DateBox.SelectedDate = t.Date;
+        ConditionBox.SelectedItem = ConditionBox.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == t.Condition) ?? ConditionBox.Items[0];
         CommandsBox.Text = t.Commands;
         LastRunText.Text = t.LastRun is { } last ? $"Last ran {last:g}." : "Hasn't run yet.";
     }
@@ -54,6 +56,7 @@ public partial class SchedulerTab : UserControl
         IntervalPanel.Visibility = kind == "interval" ? Visibility.Visible : Visibility.Collapsed;
         TimePanel.Visibility = kind == "interval" ? Visibility.Collapsed : Visibility.Visible;
         DayBox.Visibility = kind == "weekly" ? Visibility.Visible : Visibility.Collapsed;
+        DateBox.Visibility = kind == "once" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     void AddTask(ScheduledTask t)
@@ -99,6 +102,8 @@ public partial class SchedulerTab : UserControl
         if (int.TryParse(IntervalBox.Text, out var m)) t.IntervalMinutes = m;
         t.Time = TimeBox.Text.Trim();
         t.Day = DayBox.SelectedItem is DayOfWeek d ? d : DayOfWeek.Sunday;
+        if (kind == "once" && DateBox.SelectedDate is { } date && date.Date != t.Date.Date) { t.Date = date.Date; t.LastRun = null; }
+        t.Condition = (string)((ComboBoxItem)ConditionBox.SelectedItem).Tag;
         t.Commands = CommandsBox.Text;
         if (scheduleChanged) t.CreatedAt = DateTime.Now; // count a new interval from now
         Host.SaveConfig();

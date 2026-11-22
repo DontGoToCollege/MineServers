@@ -9,16 +9,16 @@ namespace MineServers.Core;
 /// </summary>
 public static class Firewall
 {
-    public static string RuleName(int port) => $"MineServers (Minecraft TCP {port})";
+    public static string RuleName(int port, bool udp = false) => $"MineServers (Minecraft {(udp ? "UDP" : "TCP")} {port})";
 
     /// <summary>True if an enabled inbound "allow" rule already covers this TCP port. Reading rules needs no admin rights.</summary>
-    public static bool IsAllowed(int port)
+    public static bool IsAllowed(int port, bool udp = false)
     {
         dynamic fw = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
         foreach (dynamic r in fw.Rules)
         {
-            // Direction 1 = inbound, Action 1 = allow, Protocol 6 = TCP.
-            if (r.Direction == 1 && r.Action == 1 && r.Enabled && r.Protocol == 6
+            // Direction 1 = inbound, Action 1 = allow, Protocol 6 = TCP, 17 = UDP.
+            if (r.Direction == 1 && r.Action == 1 && r.Enabled && r.Protocol == (udp ? 17 : 6)
                 && string.IsNullOrEmpty((string?)r.ApplicationName) && PortListHas((string?)r.LocalPorts, port))
                 return true;
         }
@@ -35,10 +35,10 @@ public static class Firewall
         });
 
     /// <summary>Adds an inbound allow rule for the port. Windows shows its own permission prompt; returns false if the owner declines.</summary>
-    public static async Task<bool> Allow(int port)
+    public static async Task<bool> Allow(int port, bool udp = false)
     {
         var psi = new ProcessStartInfo("netsh",
-            $"advfirewall firewall add rule name=\"{RuleName(port)}\" dir=in action=allow protocol=TCP localport={port} profile=any")
+            $"advfirewall firewall add rule name=\"{RuleName(port, udp)}\" dir=in action=allow protocol={(udp ? "UDP" : "TCP")} localport={port} profile=any")
         {
             UseShellExecute = true, // needed for "runas", which triggers the Windows permission prompt
             Verb = "runas",

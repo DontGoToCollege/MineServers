@@ -35,6 +35,18 @@
                     </StackPanel>
                     <Button Content="Open folder" Margin="0,6,0,0" HorizontalAlignment="Left" Click="OpenFolder_Click"/>
                     <TextBlock Style="{StaticResource Help}" Text="Restart the server to load changes."/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button x:Name="CheckButton" Content="Check for updates" Click="CheckUpdates_Click"/>
+                        <Button x:Name="UpdateButton" Content="Update all" IsEnabled="False" Click="UpdateAll_Click"/>
+                    </StackPanel>
+                    <TextBlock x:Name="UpdatesText" Style="{StaticResource Help}"/>
+
+                    <StackPanel x:Name="BedrockPanel" Margin="0,14,0,0">
+                        <TextBlock Text="Bedrock players" FontWeight="SemiBold"/>
+                        <TextBlock Style="{StaticResource Help}" Text="Let friends on phones, consoles and Windows Bedrock edition join too (Geyser + Floodgate)."/>
+                        <Button x:Name="BedrockButton" Content="Let Bedrock players join" HorizontalAlignment="Left" Margin="0,6,0,0" Click="Bedrock_Click"/>
+                    </StackPanel>
                 </StackPanel>
                 <ListBox x:Name="InstalledList"/>
             </DockPanel>

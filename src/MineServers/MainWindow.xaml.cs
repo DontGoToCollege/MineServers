@@ -12,10 +12,12 @@ namespace MineServers;
 
 public partial class MainWindow : Window
 {
-    const int MaxLog = 300_000;
+    const int MaxLog = 5000; // console lines kept per server
     readonly AppConfig _cfg = Store.Load();
     readonly ObservableCollection<ServerItem> _items = new();
     readonly List<JavaInstall> _javas = JavaFinder.FindAll();
+    readonly Tray _tray;
+    readonly HashSet<ServerItem> _wasRunning = new(); // reached "Running", so a stop is worth announcing
     bool _closing, _updating;
 
     ServerItem? Selected => ServerList.SelectedItem as ServerItem;
@@ -25,6 +27,11 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Title = $"MineServers {AppInfo.Version}";
+        _tray = new Tray(this, Close);
+        // Fabric servers SquidServers labelled "vanilla" (imported before 1.5.0) get their Mods tab back.
+        var secretlyFabric = _cfg.Servers.Where(s => s.Type == "vanilla" && SquidImport.IsFabric(s.Path)).ToList();
+        foreach (var s in secretlyFabric) s.Type = "fabric";
+        if (secretlyFabric.Count > 0) SaveConfig();
         TunnelBox.ItemsSource = TunnelKinds.All;
         foreach (var s in _cfg.Servers) Add(s);
         ServerList.ItemsSource = _items;
@@ -34,6 +41,13 @@ public partial class MainWindow : Window
         var updateSignal = new EventWaitHandle(false, EventResetMode.AutoReset, $@"Local\MineServers-Close-{Environment.ProcessId}");
         ThreadPool.RegisterWaitForSingleObject(updateSignal, (_, _) => Dispatcher.BeginInvoke(CloseForUpdate), null, -1, true);
         Loaded += async (_, _) => await ResumeAfterUpdate();
+        // Started with Windows: stay out of the way, by the clock.
+        if (Environment.GetCommandLineArgs().Contains("--minimized"))
+        {
+            WindowState = WindowState.Minimized;
+            ShowActivated = false;
+            Loaded += (_, _) => { if (_cfg.MinimizeToTray) Hide(); };
+        }
 
         // Every 2 seconds: sample CPU/memory and run any scheduled tasks that are due.
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -47,9 +61,17 @@ public partial class MainWindow : Window
         foreach (var item in _items)
         {
             if (item.Runner.IsRunning) item.Perf.Sample(item.Runner.Process);
-            foreach (var task in item.Entry.Tasks.Where(t => Scheduler.IsDue(t, now)).ToList())
+            if (item.Runner.State == "Running" && !item.NoTickCommand && now >= item.NextTpsSample && now >= item.QuietUntil)
+            {
+                // For the TPS graph; the reply is kept out of the console.
+                item.NextTpsSample = now.AddSeconds(15);
+                item.QuietTicksUntil = now.AddSeconds(3);
+                item.Runner.Send("tick query");
+            }
+            foreach (var task in item.Entry.Tasks.Where(t => Scheduler.IsDue(t, now) && Scheduler.ConditionMet(t, item.Online.Count)).ToList())
             {
                 task.LastRun = now;
+                if (task.Kind == "once") task.Enabled = false;
                 SaveConfig();
                 _ = RunTask(item, task);
             }
@@ -105,12 +127,77 @@ public partial class MainWindow : Window
                 case "!stop":
                     await item.Runner.Stop();
                     break;
+                case "!backup":
+                    await BackUp(item);
+                    break;
                 default:
                     if (item.Runner.IsRunning) { AppendLog(item, "> " + step); item.Runner.Send(step); }
                     else AppendLog(item, $"[Scheduler] Skipped \"{step}\": the server isn't running.");
                     break;
             }
         }
+    }
+
+    /// <summary>Backs up the server. While it runs, saving is paused and the world saved first, so the copy is consistent.</summary>
+    internal async Task<bool> BackUp(ServerItem item, string? label = null)
+    {
+        if (item.Busy) { AppendLog(item, "[MineServers] Skipped the backup: another backup or world change is still going."); return false; }
+        item.Busy = true;
+        if (item == Selected) WorldTab.Show(item);
+        try
+        {
+            var (path, skipped) = await WithWorldSaved(item, () => Backups.Create(item.Entry, label, item.Entry.BackupKeep));
+            AppendLog(item, $"[MineServers] Backed up to {Path.GetFileName(path)}."
+                            + (skipped.Count > 0 ? $" Left out (in use): {string.Join(", ", skipped.Take(5))}" : ""));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppendLog(item, "[MineServers] Backup failed: " + ex.Message);
+            return false;
+        }
+        finally
+        {
+            item.Busy = false;
+            if (item == Selected) WorldTab.Show(item);
+        }
+    }
+
+    /// <summary>Runs <paramref name="work"/> off the UI thread. If the server is running, it stops writing the world until the work is done.</summary>
+    internal async Task<T> WithWorldSaved<T>(ServerItem item, Func<T> work)
+    {
+        bool running = item.Runner.IsRunning;
+        if (running)
+        {
+            var saved = new TaskCompletionSource();
+            void OnLine(string line) { if (line.Contains("Saved the game")) saved.TrySetResult(); }
+            item.Runner.Output += OnLine;
+            item.Runner.Send("save-off");
+            item.Runner.Send("save-all flush");
+            await Task.WhenAny(saved.Task, Task.Delay(TimeSpan.FromSeconds(60)));
+            item.Runner.Output -= OnLine;
+        }
+        try { return await Task.Run(work); }
+        finally { if (running) item.Runner.Send("save-on"); }
+    }
+
+    /// <summary>Restarts a server that crashed, up to 3 times in 10 minutes, and says so by the clock.</summary>
+    async Task OnCrash(ServerItem item)
+    {
+        var now = DateTime.Now;
+        item.Crashes.RemoveAll(t => now - t > TimeSpan.FromMinutes(10));
+        item.Crashes.Add(now);
+        bool retry = item.Entry.RestartOnCrash && item.Crashes.Count <= 3;
+        var what = retry ? "Restarting it in 5 seconds."
+            : item.Entry.RestartOnCrash ? "It crashed 3 times in 10 minutes, so it's left stopped. Its console may say why."
+            : "Its console may say why.";
+        AppendLog(item, "[MineServers] The server crashed. " + what);
+        _tray.Notify($"{item.Entry.Name} crashed", what);
+        _wasRunning.Remove(item);
+        Discord.Post(_cfg.DiscordWebhook, $"{item.Entry.Name} crashed. {what}");
+        if (!retry) return;
+        await Task.Delay(5000);
+        if (item.Runner.State == "Stopped") await StartServer(item);
     }
 
     /// <summary>Asks the server for its game rules. Tries 26.x names first, then 1.x camelCase. The replies stay out of the console.</summary>
@@ -134,9 +221,23 @@ public partial class MainWindow : Window
         Close();
     }
 
+    void AppSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (new AppSettingsWindow(_cfg) { Owner = this }.ShowDialog() == true) SaveConfig();
+    }
+
+    void Window_StateChanged(object? sender, EventArgs e)
+    {
+        if (WindowState == WindowState.Minimized && _cfg.MinimizeToTray) Hide();
+    }
+
     async Task ResumeAfterUpdate()
     {
-        if (!File.Exists(ResumePath)) return;
+        if (!File.Exists(ResumePath))
+        {
+            foreach (var item in _items.Where(i => i.Entry.AutoStart).ToList()) await StartServer(item);
+            return;
+        }
         var ids = System.Text.Json.JsonSerializer.Deserialize<List<string>>(File.ReadAllText(ResumePath)) ?? new();
         File.Delete(ResumePath);
         foreach (var item in _items.Where(i => ids.Contains(i.Entry.Id)).ToList())
@@ -155,9 +256,21 @@ public partial class MainWindow : Window
             int online = item.Online.Count;
             if (!item.Observe(line)) AppendLog(item, line);
             if (Players.RejectedName(line) is { } name) OfferToAllow(item, name);
-            if (online != item.Online.Count) item.Refresh();
+            if (Players.JoinedName(line) is { } joined)
+            {
+                if (_cfg.NotifyJoins) _tray.Notify($"{joined} joined", $"{item.Entry.Name} · {item.Online.Count} online");
+                Discord.Post(_cfg.DiscordWebhook, $"**{joined}** joined {item.Entry.Name} ({item.Online.Count} online)");
+            }
+            else if (Players.LeftName(line) is { } left)
+                Discord.Post(_cfg.DiscordWebhook, $"**{left}** left {item.Entry.Name} ({item.Online.Count} online)");
+            if (item.SparkPending && System.Text.RegularExpressions.Regex.Match(line, @"https://spark\.lucko\.me/\w+") is { Success: true } report)
+            {
+                item.SparkPending = false;
+                Process.Start(new ProcessStartInfo(report.Value) { UseShellExecute = true });
+            }
+            if (online != item.Online.Count) { item.Refresh(); SaveConfig(); } // playtime is kept in the config
             if (item != Selected) return;
-            if (online != item.Online.Count) OnlineList.ItemsSource = item.Online.ToList();
+            if (online != item.Online.Count) ShowOnline(item);
             if (GameSettings.ParseRule(line) != null) GamePanel.ShowRules(item);
             if (PerfMeter.ParseTickMs(line) != null) PerfTab.Show(item);
         });
@@ -179,8 +292,9 @@ public partial class MainWindow : Window
         EmptyText.Visibility = item == null ? Visibility.Visible : Visibility.Collapsed;
         if (item == null) return;
         var s = item.Entry;
-        ConsoleBox.Text = item.Log.ToString();
-        ConsoleBox.ScrollToEnd();
+        ConsoleList.ItemsSource = item.Log;
+        ApplyFilter(item);
+        ScrollConsoleToEnd();
         NameBox.Text = s.Name;
         TunnelBox.SelectedItem = TunnelKinds.All.FirstOrDefault(k => k.Id == s.Tunnel) ?? TunnelKinds.All[0];
         CustomCommandBox.Text = s.CustomTunnelCommand ?? "";
@@ -188,6 +302,15 @@ public partial class MainWindow : Window
         NgrokTokenBox.Password = _cfg.NgrokAuthToken ?? "";
         RamBox.Text = s.RamMb.ToString();
         PortBox.Text = s.Port.ToString();
+        RestartOnCrashBox.IsChecked = s.RestartOnCrash;
+        AutoStartBox.IsChecked = s.AutoStart;
+        AikarBox.IsChecked = s.AikarFlags;
+        ShowIcon(s);
+        UpgradeBox.ItemsSource = null;
+        bool upgradable = s.Type is "vanilla" or "paper" or "fabric";
+        UpgradeBox.IsEnabled = UpgradeButton.IsEnabled = upgradable;
+        UpgradeHelp.Text = !upgradable ? $"MineServers can't upgrade {s.Type} servers."
+            : $"Now on {s.Version}. A backup is made first." + (s.Type == "paper" ? " Picking the same version gets the latest Paper build." : "");
         var javaChoices = new List<object> { "Automatic (best match for this version)" };
         javaChoices.AddRange(_javas);
         JavaBox.ItemsSource = javaChoices;
@@ -204,6 +327,7 @@ public partial class MainWindow : Window
         SchedTab.Show(item);
         PlugTab.Show(item);
         FileTab.Show(item);
+        WorldTab.Show(item);
         GamePanel.Show(item);
     }
 
@@ -218,15 +342,49 @@ public partial class MainWindow : Window
         AllowedList.ItemsSource = Players.Allowed(dir);
         BannedList.ItemsSource = Players.Banned(dir);
         OpsList.ItemsSource = Players.Operators(dir);
-        OnlineList.ItemsSource = item.Online.ToList();
+        BannedIpList.ItemsSource = Players.BannedIps(dir);
+        ShowOnline(item);
         PlayersNote.Visibility = item.Runner.IsRunning ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    void OnlineCommand(string verb)
+    void ShowOnline(ServerItem item)
     {
-        if (Selected is { } item && OnlineList.SelectedItem is string name) PlayerCommand(item, $"{verb} {name}");
+        OnlineList.ItemsSource = item.Online.ToList();
+        TeleportBox.ItemsSource = item.Online.ToList();
+        KnownList.ItemsSource = item.PlayerSummaries();
+    }
+
+    void BanIpOnline_Click(object sender, RoutedEventArgs e) => OnlineCommand("ban-ip");
+
+    void GameMode_Click(object sender, RoutedEventArgs e) =>
+        OnlineCommand($"gamemode {((ComboBoxItem)GameModeBox.SelectedItem).Content}");
+
+    void Teleport_Click(object sender, RoutedEventArgs e)
+    {
+        if (TeleportBox.SelectedItem is string target) OnlineCommand("tp", " " + target);
+        else MessageBox.Show("Pick who to teleport to.", "MineServers");
+    }
+
+    void Tell_Click(object sender, RoutedEventArgs e)
+    {
+        var text = TellBox.Text.ReplaceLineEndings(" ").Trim(); // one line, so it can't become a second command
+        if (text.Length == 0) return;
+        OnlineCommand("tell", " " + text);
+        TellBox.Clear();
+    }
+
+    void UnbanIp_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is { } item && BannedIpList.SelectedItem is string ip && Players.IsValidIp(ip)) PlayerCommand(item, $"pardon-ip {ip}");
+    }
+
+    void OnlineCommand(string verb, string after)
+    {
+        if (Selected is { } item && OnlineList.SelectedItem is string name) PlayerCommand(item, $"{verb} {name}{after}");
         else MessageBox.Show("Pick a player in the Online now list first.", "MineServers");
     }
+
+    void OnlineCommand(string verb) => OnlineCommand(verb, "");
 
     void Kick_Click(object sender, RoutedEventArgs e) => OnlineCommand("kick");
     void OpOnline_Click(object sender, RoutedEventArgs e) => OnlineCommand("op");
@@ -245,7 +403,8 @@ public partial class MainWindow : Window
         if (!item.AskedAbout.Add(name)) return;
         if (MessageBox.Show($"{name} tried to join \"{item.Entry.Name}\" but isn't on its whitelist.\n\nLet {name} join from now on?",
                 "MineServers", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        PlayerCommand(item, $"whitelist add {name}");
+        // Bedrock players (".Name") have no Java account, so Floodgate keeps its own whitelist.
+        PlayerCommand(item, name.StartsWith('.') ? $"fwhitelist add {name[1..]}" : $"whitelist add {name}");
         AppendLog(item, $"[MineServers] {name} can join now. Ask them to connect again.");
     }
 
@@ -321,17 +480,40 @@ public partial class MainWindow : Window
 
     void AppendLog(ServerItem item, string line)
     {
-        item.Log.AppendLine(line);
-        bool trimmed = false;
-        if (item.Log.Length > MaxLog)
-        {
-            item.Log.Remove(0, item.Log.Length - MaxLog / 2);
-            trimmed = true;
-        }
-        if (item != Selected) return;
-        if (trimmed) ConsoleBox.Text = item.Log.ToString();
-        else ConsoleBox.AppendText(line + Environment.NewLine);
-        ConsoleBox.ScrollToEnd();
+        item.Log.Add(new LogLine(line));
+        if (item.Log.Count > MaxLog) for (int i = 0; i < MaxLog / 5; i++) item.Log.RemoveAt(0);
+        if (item == Selected && FilterBox.Text.Length == 0) ScrollConsoleToEnd();
+    }
+
+    void ScrollConsoleToEnd()
+    {
+        if (ConsoleList.Items.Count > 0) ConsoleList.ScrollIntoView(ConsoleList.Items[^1]);
+    }
+
+    void FilterBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (Selected is { } item) ApplyFilter(item);
+    }
+
+    void ApplyFilter(ServerItem item)
+    {
+        var text = FilterBox.Text;
+        System.Windows.Data.CollectionViewSource.GetDefaultView(item.Log).Filter =
+            text.Length == 0 ? null : o => ((LogLine)o).Text.Contains(text, StringComparison.OrdinalIgnoreCase);
+        if (text.Length == 0) ScrollConsoleToEnd();
+    }
+
+    void ConsoleList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.C || Keyboard.Modifiers != ModifierKeys.Control || ConsoleList.SelectedItems.Count == 0) return;
+        var lines = ConsoleList.SelectedItems.Cast<LogLine>().OrderBy(l => ConsoleList.Items.IndexOf(l)).Select(l => l.Text);
+        Clipboard.SetText(string.Join(Environment.NewLine, lines));
+        e.Handled = true;
+    }
+
+    void OldLogs_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is { } item) new OldLogsWindow(Path.Combine(item.Entry.Path, "logs")) { Owner = this }.Show();
     }
 
     async void OnStateChanged(ServerItem item)
@@ -349,7 +531,16 @@ public partial class MainWindow : Window
         }
         item.Refresh();
         if (item == Selected) { RefreshHeader(); RefreshTabs(item); }
-        if (state == "Running") await QueryRules(item);
+        if (state == "Running")
+        {
+            _wasRunning.Add(item);
+            if (Geyser.UseFloodgate(item.Entry.Path)) Run(item, "geyser reload"); // first run after installing Geyser
+            await QueryRules(item);
+        }
+        if (state != "Stopped") return;
+        SaveConfig(); // playtime of players who were still on
+        if (item.Runner.CrashedWhileRunning && !_closing) await OnCrash(item);
+        else if (_wasRunning.Remove(item)) Discord.Post(_cfg.DiscordWebhook, $"{item.Entry.Name} stopped.");
     }
 
     // ---------- start / stop ----------
@@ -361,6 +552,7 @@ public partial class MainWindow : Window
 
     async Task StartServer(ServerItem item)
     {
+        if (item.Busy) { AppendLog(item, "[MineServers] Wait for the backup or world change to finish, then start the server."); return; }
         var progress = new Progress<string>(m => AppendLog(item, "[MineServers] " + m));
         await CheckFirewall(item);
         try
@@ -373,6 +565,7 @@ public partial class MainWindow : Window
                 item.Entry.PendingProperties.Clear();
                 Save();
             }
+            Geyser.UseFloodgate(item.Entry.Path);
             await item.Runner.Start(item.Entry, progress);
         }
         catch (Exception ex)
@@ -392,6 +585,8 @@ public partial class MainWindow : Window
             if (item.Tunnel != tunnel) { await tunnel.Stop(); return; } // the server stopped meanwhile
             item.Address = address;
             AppendLog(item, $"[MineServers] Players join at: {address}");
+            if (item.Entry.Type == "paper" && Geyser.Installed(item.Entry.Path)) AppendLog(item, "[MineServers] " + Geyser.JoinInfo(item.Entry, address));
+            Discord.Post(_cfg.DiscordWebhook, $"{item.Entry.Name} is online. Join at {address}");
         }
         catch (Exception ex)
         {
@@ -474,12 +669,20 @@ public partial class MainWindow : Window
     {
         if (Selected is not { } item) return;
         item.Log.Clear();
-        ConsoleBox.Clear();
     }
 
     void Copy_Click(object sender, RoutedEventArgs e)
     {
         if (AddressBox.Text.Length > 0) Clipboard.SetText(AddressBox.Text);
+    }
+
+    async void Reach_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } item) return;
+        ReachButton.IsEnabled = false;
+        var answer = await Reach.Check(item.Entry, item.Address, item.Runner.State == "Running");
+        ReachButton.IsEnabled = true;
+        MessageBox.Show(answer, "Can friends join?");
     }
 
     void OpenFolder_Click(object sender, RoutedEventArgs e)
@@ -520,6 +723,9 @@ public partial class MainWindow : Window
         s.RamMb = ram;
         s.Port = port;
         s.JavaPath = (JavaBox.SelectedItem as JavaInstall)?.Exe;
+        s.RestartOnCrash = RestartOnCrashBox.IsChecked == true;
+        s.AutoStart = AutoStartBox.IsChecked == true;
+        s.AikarFlags = AikarBox.IsChecked == true;
         _cfg.NgrokAuthToken = NullIfEmpty(NgrokTokenBox.Password);
 
         var changes = GamePanel.Changes();
@@ -545,6 +751,85 @@ public partial class MainWindow : Window
         if (restartNeeded && MessageBox.Show($"Saved. The server reads these {changes.Count} setting(s) when it starts.\n\nRestart the server now? Players will be disconnected for a moment.",
                 "MineServers", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             await RestartServer(item);
+    }
+
+    void ShowIcon(ServerEntry s)
+    {
+        var file = Path.Combine(s.Path, "server-icon.png");
+        if (!File.Exists(file)) { IconImage.Source = null; return; }
+        var img = new System.Windows.Media.Imaging.BitmapImage();
+        img.BeginInit();
+        img.UriSource = new Uri(file);
+        img.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad; // don't keep the file locked
+        img.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.IgnoreImageCache;
+        img.EndInit();
+        IconImage.Source = img;
+    }
+
+    void Icon_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } item) return;
+        var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "Pictures|*.png;*.jpg;*.jpeg;*.bmp;*.gif" };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            var src = new System.Windows.Media.Imaging.BitmapImage();
+            src.BeginInit();
+            src.UriSource = new Uri(dlg.FileName);
+            src.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            src.EndInit();
+            int side = Math.Min(src.PixelWidth, src.PixelHeight);
+            var square = new System.Windows.Media.Imaging.CroppedBitmap(src, new Int32Rect((src.PixelWidth - side) / 2, (src.PixelHeight - side) / 2, side, side));
+            var icon = new System.Windows.Media.Imaging.TransformedBitmap(square, new System.Windows.Media.ScaleTransform(64.0 / side, 64.0 / side));
+            var png = new System.Windows.Media.Imaging.PngBitmapEncoder();
+            png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(icon));
+            using (var fs = File.Create(Path.Combine(item.Entry.Path, "server-icon.png"))) png.Save(fs);
+            ShowIcon(item.Entry);
+        }
+        catch (Exception ex) when (ex is IOException or NotSupportedException or ArgumentException)
+        {
+            MessageBox.Show("Couldn't use that picture:\n\n" + ex.Message, "MineServers");
+        }
+    }
+
+    async void UpgradeBox_DropDownOpened(object sender, EventArgs e)
+    {
+        if (UpgradeBox.ItemsSource != null || Selected is not { } item) return;
+        try
+        {
+            var releases = await Downloads.GetReleases();
+            // Newest first; worlds can't go back to an older version, so only offer this one and newer.
+            int current = releases.FindIndex(r => r.Id == item.Entry.Version);
+            if (item == Selected) UpgradeBox.ItemsSource = current >= 0 ? releases.Take(current + 1).ToList() : releases;
+        }
+        catch (Exception ex) { UpgradeHelp.Text = "Couldn't load versions (are you online?): " + ex.Message; }
+    }
+
+    async void Upgrade_Click(object sender, RoutedEventArgs e)
+    {
+        if (Selected is not { } item) return;
+        if (UpgradeBox.SelectedItem is not McVersion v) { MessageBox.Show("Pick a version in the list first.", "MineServers"); return; }
+        var s = item.Entry;
+        if (item.Runner.State != "Stopped" || item.Busy) { MessageBox.Show("Stop the server first, then try again.", "MineServers"); return; }
+        bool same = v.Id == s.Version;
+        var addOns = Modrinth.For(s.Type) is { } k ? $"\n\nSome {k.Noun}s may need updating afterwards: {k.Noun[0].ToString().ToUpper()}{k.Noun[1..]}s tab > Check for updates." : "";
+        if (MessageBox.Show((same ? $"Get the newest {s.Type} build of {v.Id}?" : $"Upgrade \"{s.Name}\" from {s.Version} to {v.Id}?\n\nOnce the world opens in {v.Id} it can't go back to {s.Version} except by restoring the backup made now.") + addOns,
+                "MineServers", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if (!await BackUp(item, "before upgrading")) { MessageBox.Show("The backup failed, so nothing was changed. The console says why.", "MineServers"); return; }
+        item.Busy = true;
+        try
+        {
+            s.JavaMajor = await Downloads.InstallServerJar(s.Type, v, s.Path, new Progress<string>(m => AppendLog(item, "[MineServers] " + m)));
+            s.Version = v.Id;
+            s.JarFile = "server.jar";
+            s.JavaPath = null; // a newer version may need a newer Java; pick it automatically
+            Save();
+            AppendLog(item, $"[MineServers] Now on {s.Type} {v.Id}. Start the server to finish the upgrade.");
+        }
+        catch (Exception ex) { AppendLog(item, "[MineServers] Upgrade failed: " + ex.Message); MessageBox.Show("The upgrade failed:\n\n" + ex.Message, "MineServers"); }
+        item.Busy = false;
+        item.Refresh();
+        if (item == Selected) ShowSelected();
     }
 
     static string? NullIfEmpty(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
@@ -608,6 +893,7 @@ public partial class MainWindow : Window
         await Task.WhenAll(running.Select(i => i.Runner.Stop()));
         await Task.WhenAll(_items.Where(i => i.Tunnel != null).Select(i => i.Tunnel!.Stop()));
         PlayitTunnel.StopAgent();
+        _tray.Dispose();
         // Posted, not called: if nothing above had to wait, we're still inside this Closing event, where Close() throws.
         _ = Dispatcher.BeginInvoke(Close);
     }

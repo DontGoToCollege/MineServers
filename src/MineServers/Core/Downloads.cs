@@ -39,7 +39,7 @@ public static class Downloads
     }
 
     /// <summary>Downloads the server jar for <paramref name="type"/> into <paramref name="dir"/> and returns the Java version it needs.</summary>
-    public static async Task<int> InstallServerJar(string type, McVersion version, string dir, IProgress<string> log)
+    public static async Task<int> InstallServerJar(string type, McVersion version, string dir, IProgress<string> log, string? fabricLoader = null)
     {
         var meta = await GetJson(version.Url);
         int javaMajor = meta.TryGetProperty("javaVersion", out var jv) ? jv.GetProperty("majorVersion").GetInt32() : 8;
@@ -61,7 +61,7 @@ public static class Downloads
                 }
                 break;
             case "fabric":
-                var loader = (await GetJson("https://meta.fabricmc.net/v2/versions/loader")).EnumerateArray()
+                var loader = fabricLoader ?? (await GetJson("https://meta.fabricmc.net/v2/versions/loader")).EnumerateArray()
                     .First(l => l.GetProperty("stable").GetBoolean()).GetProperty("version").GetString();
                 var installer = (await GetJson("https://meta.fabricmc.net/v2/versions/installer")).EnumerateArray()
                     .First(l => l.GetProperty("stable").GetBoolean()).GetProperty("version").GetString();

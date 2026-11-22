@@ -25,14 +25,29 @@ public class ServerEntry
     public List<string> CommandHistory { get; set; } = new();
     /// <summary>server.properties changes made while the server ran; written just before the next start so the server can't overwrite them.</summary>
     public Dictionary<string, string> PendingProperties { get; set; } = new();
+    public int BackupKeep { get; set; } = 10;
+    public bool RestartOnCrash { get; set; } = true;
+    public bool AutoStart { get; set; }
+    public bool AikarFlags { get; set; }
+    public Dictionary<string, PlayerStat> PlayerStats { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public override string ToString() => Name;
+}
+
+public class PlayerStat
+{
+    public double Minutes { get; set; }
+    public DateTime LastSeen { get; set; }
+    public string? LastIp { get; set; }
 }
 
 public class AppConfig
 {
     public List<ServerEntry> Servers { get; set; } = new();
     public string? NgrokAuthToken { get; set; }
+    public bool MinimizeToTray { get; set; } = true;
+    public bool NotifyJoins { get; set; } = true;
+    public string? DiscordWebhook { get; set; }
 }
 
 public static class AppInfo

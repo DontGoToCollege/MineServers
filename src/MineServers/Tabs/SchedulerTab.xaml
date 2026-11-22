@@ -30,6 +30,7 @@
                     <ComboBoxItem Tag="interval" Content="Every few minutes"/>
                     <ComboBoxItem Tag="daily" Content="Every day at a time"/>
                     <ComboBoxItem Tag="weekly" Content="Every week on a day and time"/>
+                    <ComboBoxItem Tag="once" Content="Once, on a date and time"/>
                 </ComboBox>
                 <StackPanel x:Name="IntervalPanel" Orientation="Horizontal" Margin="0,6,0,0">
                     <TextBlock Text="Every" VerticalAlignment="Center" Margin="0,0,6,0"/>
@@ -38,10 +39,18 @@
                 </StackPanel>
                 <StackPanel x:Name="TimePanel" Orientation="Horizontal" Margin="0,6,0,0">
                     <ComboBox x:Name="DayBox" Width="120" Margin="0,0,8,0"/>
+                    <DatePicker x:Name="DateBox" Width="130" Margin="0,0,8,0"/>
                     <TextBlock Text="at" VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <TextBox x:Name="TimeBox" Width="70" ToolTip="24-hour time, e.g. 04:00 or 21:30"/>
                     <TextBlock Text="(24-hour, e.g. 04:00)" Foreground="#555" VerticalAlignment="Center" Margin="6,0,0,0"/>
                 </StackPanel>
+
+                <TextBlock Style="{StaticResource Label}" Text="Only if"/>
+                <ComboBox x:Name="ConditionBox">
+                    <ComboBoxItem Tag="always" Content="Always"/>
+                    <ComboBoxItem Tag="empty" Content="Nobody is online (waits until they've left)"/>
+                    <ComboBoxItem Tag="players" Content="Players are online (waits until someone joins)"/>
+                </ComboBox>
 
                 <TextBlock Style="{StaticResource Label}" Text="What to do (one step per line)"/>
                 <TextBox x:Name="CommandsBox" AcceptsReturn="True" FontFamily="Consolas" Height="130" VerticalScrollBarVisibility="Auto"/>
@@ -50,7 +59,8 @@
                     !wait 30 · pause for 30 seconds<LineBreak/>
                     !restart · stop and start the server<LineBreak/>
                     !start · start it if it's stopped<LineBreak/>
-                    !stop · stop it (saving the world first)
+                    !stop · stop it (saving the world first)<LineBreak/>
+                    !backup · back up the server (see the World tab)
                 </TextBlock>
                 <TextBlock x:Name="LastRunText" Style="{StaticResource Help}" Margin="0,8,0,0"/>
 

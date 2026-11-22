@@ -28,9 +28,13 @@
 
         <TextBlock x:Name="StatusText" Style="{StaticResource Help}" Margin="0,12,0,0"/>
 
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-            <Button x:Name="CreateButton" Content="Create" Style="{StaticResource Primary}" Click="Create_Click" IsDefault="True"/>
-            <Button Content="Cancel" Margin="0" IsCancel="True"/>
-        </StackPanel>
+        <DockPanel Margin="0,14,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="CreateButton" Content="Create" Style="{StaticResource Primary}" Click="Create_Click" IsDefault="True"/>
+                <Button Content="Cancel" Margin="0" IsCancel="True"/>
+            </StackPanel>
+            <Button x:Name="ModpackButton" Content="From a modpack..." HorizontalAlignment="Left" Click="Modpack_Click"
+                    ToolTip="Set up a server from a Modrinth modpack file (.mrpack). Type and version come from the pack."/>
+        </DockPanel>
     </StackPanel>
 </Window>

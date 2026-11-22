@@ -14,6 +14,8 @@ public class ServerRunner
     public string State { get; private set; } = "Stopped"; // Stopped | Starting | Running | Stopping
     public bool IsRunning => _proc is { HasExited: false };
     public DateTime StartedAt { get; private set; }
+    /// <summary>The last run ended without anyone asking it to stop.</summary>
+    public bool CrashedWhileRunning { get; private set; }
     // shortcut: for run.bat servers this is cmd.exe, so CPU/memory miss the java child; read the child process if Forge users need it.
     public Process? Process => IsRunning ? _proc : null;
 
@@ -41,7 +43,10 @@ public class ServerRunner
             if (File.Exists(jar))
             {
                 psi.FileName = java;
-                foreach (var a in new[] { $"-Xms{s.RamMb}M", $"-Xmx{s.RamMb}M", "-jar", s.JarFile, "nogui" }) psi.ArgumentList.Add(a);
+                psi.ArgumentList.Add($"-Xms{s.RamMb}M");
+                psi.ArgumentList.Add($"-Xmx{s.RamMb}M");
+                if (s.AikarFlags) foreach (var a in AikarFlags(s.RamMb)) psi.ArgumentList.Add(a);
+                foreach (var a in new[] { "-jar", s.JarFile, "nogui" }) psi.ArgumentList.Add(a);
             }
             else if (File.Exists(Path.Combine(s.Path, "run.bat")))
             {
@@ -75,6 +80,22 @@ public class ServerRunner
         }
     }
 
+    /// <summary>Aikar's G1 garbage-collector flags (mcflags.emc.gs), with the bigger-heap values above 12 GB.
+    /// G1RSetUpdatingPauseIntervalMillis is left out: Java 8 and 25 refuse to start with it.</summary>
+    internal static string[] AikarFlags(int ramMb)
+    {
+        bool big = ramMb >= 12 * 1024;
+        return new[]
+        {
+            "-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled", "-XX:MaxGCPauseMillis=200", "-XX:+UnlockExperimentalVMOptions",
+            "-XX:+DisableExplicitGC", "-XX:+AlwaysPreTouch", $"-XX:G1NewSizePercent={(big ? 40 : 30)}", $"-XX:G1MaxNewSizePercent={(big ? 50 : 40)}",
+            $"-XX:G1HeapRegionSize={(big ? 16 : 8)}M", $"-XX:G1ReservePercent={(big ? 15 : 20)}", "-XX:G1HeapWastePercent=5",
+            "-XX:G1MixedGCCountTarget=4", $"-XX:InitiatingHeapOccupancyPercent={(big ? 20 : 15)}", "-XX:G1MixedGCLiveThresholdPercent=90",
+            "-XX:SurvivorRatio=32", "-XX:+PerfDisableSharedMem", "-XX:MaxTenuringThreshold=1",
+            "-Dusing.aikars.flags=https://mcflags.emc.gs", "-Daikars.new.flags=true",
+        };
+    }
+
     readonly object _gate = new();
 
     /// <summary>Reports a run's end exactly once, whether Stop() or the exit event gets here first.
@@ -86,6 +107,7 @@ public class ServerRunner
             if (_proc != p) return;
             _proc = null;
         }
+        CrashedWhileRunning = State == "Running"; // a stop request sets Stopping first
         Output?.Invoke($"[MineServers] Server stopped (exit code {p.ExitCode}).");
         SetState("Stopped");
     }
@@ -108,6 +130,7 @@ public class ServerRunner
     public void Send(string command)
     {
         if (!IsRunning) return;
+        if (command.Trim().Equals("stop", StringComparison.OrdinalIgnoreCase) && State != "Stopping") SetState("Stopping");
         _proc!.StandardInput.WriteLine(command);
         _proc.StandardInput.Flush();
     }
@@ -116,8 +139,7 @@ public class ServerRunner
     public async Task Stop(TimeSpan? grace = null)
     {
         if (_proc is not { HasExited: false } p) return;
-        SetState("Stopping");
-        Send("stop");
+        Send("stop"); // also marks it Stopping
         using var cts = new CancellationTokenSource(grace ?? TimeSpan.FromSeconds(30));
         try { await p.WaitForExitAsync(cts.Token); }
         catch (OperationCanceledException)

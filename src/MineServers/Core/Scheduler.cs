@@ -6,10 +6,12 @@ public class ScheduledTask
     public string Id { get; set; } = Guid.NewGuid().ToString("N")[..8];
     public string Name { get; set; } = "New task";
     public bool Enabled { get; set; } = true;
-    public string Kind { get; set; } = "daily"; // interval | daily | weekly
+    public string Kind { get; set; } = "daily"; // interval | daily | weekly | once
     public int IntervalMinutes { get; set; } = 60;
     public string Time { get; set; } = "04:00";
     public DayOfWeek Day { get; set; } = DayOfWeek.Sunday;
+    public DateTime Date { get; set; } = DateTime.Today.AddDays(1); // for "once"
+    public string Condition { get; set; } = "always"; // always | empty (nobody online) | players (someone online)
     public string Commands { get; set; } = "";
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public DateTime? LastRun { get; set; }
@@ -18,8 +20,9 @@ public class ScheduledTask
     {
         "interval" => $"every {IntervalMinutes} min",
         "weekly" => $"every {Day} at {Time}",
+        "once" => $"once on {Date:d} at {Time}",
         _ => $"every day at {Time}",
-    } + (Enabled ? "" : " (off)");
+    } + Condition switch { "empty" => ", when nobody's on", "players" => ", when players are on", _ => "" } + (Enabled ? "" : " (off)");
 
     public override string ToString() => $"{Name}  ·  {Summary}";
 }
@@ -36,9 +39,18 @@ public static class Scheduler
             return t.IntervalMinutes > 0 && now - (t.LastRun ?? t.CreatedAt) >= TimeSpan.FromMinutes(t.IntervalMinutes);
         if (!TimeSpan.TryParse(t.Time, out var at)) return false;
         if (t.Kind == "weekly" && now.DayOfWeek != t.Day) return false;
+        if (t.Kind == "once" && now.Date != t.Date.Date) return false;
         var slot = now.Date + at;
         return now >= slot && now - slot < Grace && (t.LastRun ?? DateTime.MinValue) < slot;
     }
+
+    /// <summary>A task whose condition isn't met waits: it keeps checking (for daily/weekly ones, until 30 minutes past its time).</summary>
+    public static bool ConditionMet(ScheduledTask t, int online) => t.Condition switch
+    {
+        "empty" => online == 0,
+        "players" => online > 0,
+        _ => true,
+    };
 
     /// <summary>One step per line or per ';', like SquidServers' scripts. A leading / is dropped from console commands.</summary>
     public static List<string> Steps(string commands) =>
@@ -52,9 +64,17 @@ public static class Scheduler
             Name = "Daily restart", Kind = "daily", Time = "04:00",
             Commands = "say Server restarts in 1 minute.\n!wait 50\nsay Restarting in 10 seconds...\n!wait 10\n!restart",
         }),
+        ("Restart at 4:00 once nobody's on", new ScheduledTask
+        {
+            Name = "Quiet restart", Kind = "daily", Time = "04:00", Condition = "empty", Commands = "!restart",
+        }),
         ("Save the world every 30 minutes", new ScheduledTask
         {
             Name = "Auto-save", Kind = "interval", IntervalMinutes = 30, Commands = "save-all",
+        }),
+        ("Back up every 6 hours (keeps the last 10)", new ScheduledTask
+        {
+            Name = "Backup", Kind = "interval", IntervalMinutes = 360, Commands = "!backup",
         }),
         ("Announcement every hour", new ScheduledTask
         {

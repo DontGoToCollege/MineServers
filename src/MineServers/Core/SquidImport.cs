@@ -23,7 +23,7 @@ public static class SquidImport
             {
                 Name = Str(e, "name") ?? Path.GetFileName(path),
                 Path = path,
-                Type = Str(e, "serverType") ?? "other",
+                Type = Str(e, "serverType") is "vanilla" or null && IsFabric(path) ? "fabric" : Str(e, "serverType") ?? "other",
                 Version = Str(e, "version") ?? "",
                 RamMb = e.TryGetProperty("ram", out var ram) && ram.TryGetInt32(out var mb) && mb > 0 ? mb : 2048,
                 Port = port > 0 ? port : 25565,
@@ -33,6 +33,10 @@ public static class SquidImport
         }
         return result;
     }
+
+    /// <summary>SquidServers labels some Fabric servers "vanilla"; the Fabric launcher leaves a .fabric folder behind.</summary>
+    public static bool IsFabric(string serverDir) =>
+        Directory.Exists(Path.Combine(serverDir, ".fabric")) || File.Exists(Path.Combine(serverDir, "fabric-server-launcher.properties"));
 
     static string? Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

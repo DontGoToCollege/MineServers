@@ -43,6 +43,42 @@ public partial class NewServerWindow : Window
         e.Handled = true;
     }
 
+    async void Modpack_Click(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(RamBox.Text, out var ram) || ram < 512) { StatusText.Text = "Memory must be at least 512 MB."; return; }
+        if (EulaBox.IsChecked != true) { StatusText.Text = "Minecraft servers only run after you agree to the EULA."; return; }
+        var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "Modrinth modpack|*.mrpack", Title = "Pick a modpack (.mrpack, downloaded from modrinth.com)" };
+        if (dlg.ShowDialog() != true) return;
+        var name = NameBox.Text.Trim() is { Length: > 0 } n && n != "My Server" ? n : Path.GetFileNameWithoutExtension(dlg.FileName);
+        IsEnabled = false;
+        var dir = Store.UniqueFolder(Store.ServersDir, name);
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var pack = await Modpack.Install(dlg.FileName, dir, new Progress<string>(m => StatusText.Text = m));
+            await File.WriteAllTextAsync(Path.Combine(dir, "eula.txt"), $"# Agreed in MineServers on {DateTime.Now:u}\neula=true\n");
+            Created = new ServerEntry
+            {
+                Name = name, Path = dir, Type = "fabric", Version = pack.McVersion,
+                JavaMajor = pack.JavaMajor, RamMb = ram, Port = FreePort(),
+            };
+            DialogResult = true;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "Couldn't set up the modpack: " + ex.Message;
+            IsEnabled = true;
+            try { Directory.Delete(dir, true); } catch (IOException) { } // only the folder this dialog just made
+        }
+    }
+
+    int FreePort()
+    {
+        int port = 25565;
+        while (_usedPorts.Contains(port)) port++;
+        return port;
+    }
+
     async void Create_Click(object sender, RoutedEventArgs e)
     {
         var name = NameBox.Text.Trim();
@@ -59,12 +95,10 @@ public partial class NewServerWindow : Window
             Directory.CreateDirectory(dir);
             var javaMajor = await Downloads.InstallServerJar(type, version, dir, new Progress<string>(m => StatusText.Text = m));
             await File.WriteAllTextAsync(Path.Combine(dir, "eula.txt"), $"# Agreed in MineServers on {DateTime.Now:u}\neula=true\n");
-            int port = 25565;
-            while (_usedPorts.Contains(port)) port++;
             Created = new ServerEntry
             {
                 Name = name, Path = dir, Type = type, Version = version.Id,
-                JavaMajor = javaMajor, RamMb = ram, Port = port,
+                JavaMajor = javaMajor, RamMb = ram, Port = FreePort(),
             };
             DialogResult = true;
         }

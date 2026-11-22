@@ -101,6 +101,7 @@ public class LanTunnel : Tunnel
 public class UpnpTunnel : Tunnel
 {
     int _port;
+    bool _bedrock;
 
     public override Task<string> Start(ServerEntry s, CancellationToken ct) => Task.Run(async () =>
     {
@@ -111,6 +112,11 @@ public class UpnpTunnel : Tunnel
             throw new InvalidOperationException("Your router didn't answer the UPnP request. Turn UPnP on in the router, or pick another tunnel.");
         maps.Add(s.Port, "TCP", s.Port, LanIp(), true, "MineServers");
         _port = s.Port;
+        if (Geyser.Installed(s.Path))
+        {
+            maps.Add(Geyser.BedrockPort, "UDP", Geyser.BedrockPort, LanIp(), true, "MineServers Bedrock");
+            _bedrock = true;
+        }
         var ip = (await Downloads.Http.GetStringAsync("https://api.ipify.org", ct)).Trim();
         Say("Port opened. If friends still can't join, your internet provider may use CGNAT; try playit.gg instead.");
         return $"{ip}:{s.Port}";
@@ -123,9 +129,11 @@ public class UpnpTunnel : Tunnel
         {
             dynamic nat = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.NATUPnP")!)!;
             nat.StaticPortMappingCollection?.Remove(_port, "TCP");
+            if (_bedrock) nat.StaticPortMappingCollection?.Remove(Geyser.BedrockPort, "UDP");
         }
         catch (Exception e) { Say("Couldn't close the router port: " + e.Message); }
         _port = 0;
+        _bedrock = false;
     });
 }
 
